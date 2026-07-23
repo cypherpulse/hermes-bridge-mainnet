@@ -1,0 +1,119 @@
+import { useStacksWallet } from "@/hooks/useStacksWallet";
+import { ConnectWalletButton } from "@/components/bridge/ConnectWalletButton";
+import { TransferForm } from "@/components/bridge/TransferForm";
+import { Send, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import { cn, formatUsd } from "@/lib/utils";
+import Navbar from "@/components/Navbar";
+import { Footer } from '@/components/Footer';
+
+const Transfer = () => {
+  const {
+    stacksAddress,
+    isConnected: isStacksConnected,
+    usdcxBalance,
+    isLoading: isStacksLoading,
+    connectWallet: connectStacksWallet,
+    disconnectWallet: disconnectStacksWallet,
+    transferUsdcx,
+    refreshBalance: refreshStacksBalance,
+  } = useStacksWallet();
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* Background gradient effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative z-10 flex flex-col flex-1">
+        <Navbar />
+
+        {/* Main Content */}
+        <main className="container mx-auto px-4 py-12 flex-1">
+          <div className="max-w-lg mx-auto space-y-6">
+            {/* Hero Section */}
+            <div className="text-center mb-8">
+              <h2 className="text-4xl font-bold mb-3">
+                <span className="text-gradient-bitcoin">USDCx</span>
+                <span className="text-foreground"> Transfer</span>
+              </h2>
+              
+              {/* Chain Logos */}
+              <div className="flex items-center justify-center gap-8 mb-4">
+                <div className="flex flex-col items-center">
+                  <img 
+                    src="https://res.cloudinary.com/dg5rr4ntw/image/upload/v1768901230/download_7_pixwpt.png" 
+                    alt="Stacks" 
+                    className="w-16 h-16 rounded-full border-2 border-indigo-500/30 bg-white shadow-lg" 
+                  />
+                  <span className="text-sm font-medium text-white mt-2">Stacks</span>
+                </div>
+                
+                <ArrowRight className="w-8 h-8 text-muted-foreground" />
+                
+                <div className="flex flex-col items-center">
+                  <img 
+                    src="https://res.cloudinary.com/dg5rr4ntw/image/upload/v1768901230/download_7_pixwpt.png" 
+                    alt="Stacks" 
+                    className="w-16 h-16 rounded-full border-2 border-indigo-500/30 bg-white shadow-lg" 
+                  />
+                  <span className="text-sm font-medium text-white mt-2">Stacks</span>
+                </div>
+              </div>
+              
+              <p className="text-muted-foreground text-lg">
+                Transfer USDCx tokens on Stacks
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Send USDCx to other Stacks addresses
+              </p>
+            </div>
+
+            {/* Stacks Balance Display */}
+            {isStacksConnected && (
+              <div className="bg-card border border-border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">USDCx Balance</p>
+                    <p className="text-2xl font-bold text-foreground">{formatUsd(usdcxBalance)} USDCx</p>
+                  </div>
+                  <button
+                    onClick={refreshStacksBalance}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    ↻
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Transfer Form */}
+            <TransferForm
+              isConnected={isStacksConnected}
+              stacksAddress={stacksAddress}
+              usdcxBalance={usdcxBalance}
+              onConnect={connectStacksWallet}
+              onDisconnect={disconnectStacksWallet}
+              onTransfer={transferUsdcx}
+              isLoading={isStacksLoading}
+            />
+
+            {/* Network Info */}
+            <div className="bg-card border border-border rounded-xl p-4 text-center">
+              <p className="text-xs text-muted-foreground">
+                Network: <span className="text-foreground">Stacks</span>
+              </p>
+            </div>
+          </div>
+        </main>
+
+        {/* Footer */}
+        <Footer />
+      </div>
+    </div>
+  );
+};
+
+export default Transfer;
