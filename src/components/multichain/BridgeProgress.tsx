@@ -1,4 +1,5 @@
 import { Loader2, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { type BridgeStep } from '@/hooks/useMultiChainBridge';
@@ -17,6 +18,13 @@ export function BridgeProgress({
 }: BridgeProgressProps) {
   const hasFailedSteps = steps.some(step => step.status === 'failed');
   const isActuallyCompleted = isCompleted && !hasFailedSteps;
+  // The attestation/minting step needs no wallet signature or user action at
+  // all - once it's running, a spinning "in progress" icon still reads as
+  // "working on it, don't leave", when the real message should be "this is
+  // submitted, you can safely check back later." Give it a calmer, distinct
+  // treatment instead of the generic in-progress spinner.
+  const attestationStep = steps.find((s) => s.id === 'xreserve-attestation');
+  const isSubmittedAndWaiting = attestationStep?.status === 'in-progress';
 
   return (
     <div className="bg-card/70 backdrop-blur-xl border border-border/50 rounded-xl p-4 space-y-4 shadow-lg shadow-black/10 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -30,14 +38,17 @@ export function BridgeProgress({
       </div>
 
       <div className="space-y-3">
-        {steps.map((step, index) => (
+        {steps.map((step, index) => {
+          const isCalmWaiting = step.id === 'xreserve-attestation' && step.status === 'in-progress';
+          return (
           <div
             key={step.id}
             style={{ animationDelay: `${index * 75}ms`, animationFillMode: 'backwards' }}
             className={cn(
               "flex items-start gap-3 p-3 rounded-lg transition-colors duration-300",
               "animate-in fade-in slide-in-from-left-2",
-              step.status === 'in-progress' && "bg-primary/10",
+              step.status === 'in-progress' && !isCalmWaiting && "bg-primary/10",
+              isCalmWaiting && "bg-blue-500/10",
               step.status === 'completed' && "bg-green-500/10",
               step.status === 'failed' && "bg-destructive/10",
             )}
@@ -47,7 +58,10 @@ export function BridgeProgress({
               {step.status === 'pending' && (
                 <div className="w-5 h-5 rounded-full border-2 border-muted-foreground" />
               )}
-              {step.status === 'in-progress' && (
+              {step.status === 'in-progress' && isCalmWaiting && (
+                <CheckCircle2 className="w-5 h-5 text-blue-400" />
+              )}
+              {step.status === 'in-progress' && !isCalmWaiting && (
                 <Loader2 className="w-5 h-5 text-primary animate-spin" />
               )}
               {step.status === 'completed' && (
@@ -85,8 +99,22 @@ export function BridgeProgress({
               {index + 1}/{steps.length}
             </span>
           </div>
-        ))}
+          );
+        })}
       </div>
+
+      {isSubmittedAndWaiting && (
+        <Alert className="bg-blue-500/10 border-blue-500/20 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <CheckCircle2 className="h-4 w-4 text-blue-400" />
+          <AlertDescription className="text-blue-300 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>Submitted! No action needed - you can safely close this tab.</span>
+            <Link to="/my-bridges" className="inline-flex items-center gap-1 text-blue-300 underline hover:text-blue-200">
+              Track status in Hermes Trail
+              <ExternalLink className="w-3 h-3" />
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {isActuallyCompleted && (
         <Alert className="bg-green-500/10 border-green-500/20 animate-in fade-in zoom-in-95 duration-500">
