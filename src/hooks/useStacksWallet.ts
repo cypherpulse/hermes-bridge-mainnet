@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
-import { 
-  connect, 
-  disconnect, 
-  isConnected as checkIsConnected, 
-  getLocalStorage, 
-  request 
+import {
+  connect,
+  disconnect,
+  isConnected as checkIsConnected,
+  getLocalStorage,
+  request
 } from '@stacks/connect';
 import { Cl } from '@stacks/transactions';
 import { hiroFetch } from '@/lib/hiro-api';
@@ -114,11 +114,11 @@ export function useStacksWallet() {
         `https://api.hiro.so/extended/v1/address/${address}/balances`
       );
       const data = await response.json();
-      
+
       // Look for USDCx token balance
       const usdcxKey = `${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}::${USDCX_CONTRACT.assetName}`;
       const balance = data.fungible_tokens?.[usdcxKey]?.balance || '0';
-      
+
       // Convert from micro-units (6 decimals)
       const formatted = (parseInt(balance) / 1_000_000).toFixed(6);
       setUsdcxBalance(formatted);
@@ -143,7 +143,7 @@ export function useStacksWallet() {
           })
         }
       );
-      
+
       if (response.ok) {
         const data = await response.json();
         // Parse the Clarity response - assuming it returns a uint
@@ -211,10 +211,9 @@ export function useStacksWallet() {
 
   const transferUsdcx = useCallback(async (
     recipient: string,
-    amount: string,
-    memo?: string
+    amount: string
   ): Promise<string | null> => {
-    console.log('transferUsdcx called with:', { recipient, amount, memo });
+    console.log('transferUsdcx called with:', { recipient, amount });
     console.log('amount type:', typeof amount, 'amount value:', amount);
 
     if (!stacksAddress) {
@@ -248,33 +247,28 @@ export function useStacksWallet() {
       const microAmount = BigInt(Math.floor(parsedAmount * 1_000_000));
       console.log('micro amount:', microAmount);
 
-      // Re-derive fresh rather than trusting the closure's cached
-      // `stacksAddress` - see getCurrentMainnetStacksAddress's own comment.
-      // usdcx's transfer asserts tx-sender == sender on-chain (err u4 if
-      // not), so the `sender` argument below and the account that actually
-      // signs must agree.
-      const currentSender = getCurrentMainnetStacksAddress() ?? stacksAddress;
+      // usdcx's `transfer` (confirmed against the deployed contract source)
+      // is `(amount, sender, recipient, memo)`, asserting
+      // `(is-eq tx-sender sender)` - err u4 (ERR_NOT_OWNER) if not.
+      //
+      // stx_callContract is what reliably opens the wallet signing prompt
+      // (Leather/Xverse don't implement the newer stx_transferSip10Ft
+      // helper, so that one silently never triggers). The one thing we must
+      // get right is that the account the wallet signs with (tx-sender)
+      // equals the `sender` argument we pass. Pin BOTH to the same connected
+      // account: pass `address` so the wallet is asked to sign with that
+      // exact account, and use it as the `sender` arg too. `stacksAddress`
+      // is the account the user actually connected with (what they see in
+      // the UI), so this is the correct signer.
+      const senderAddress = stacksAddress;
 
-      // Build function arguments using Cl helpers
       const functionArgs = [
         Cl.uint(microAmount),
-        Cl.principal(currentSender),
+        Cl.principal(senderAddress),
         Cl.principal(recipient),
-        memo ? Cl.some(Cl.bufferFromUtf8(memo)) : Cl.none(),
+        Cl.none(),
       ];
 
-      // No post-condition here, deliberately - see the matching comment on
-      // burnUsdcx's request() call below. A Pc.principal(stacksAddress)
-      // post-condition asserts a specific address sent the tokens, but the
-      // wallet extension's actual active signing account isn't guaranteed
-      // to match our cached `stacksAddress` app state - a mismatch there is
-      // exactly what surfaced as a generic "Internal error" from the wallet
-      // (not a normal user-rejection) on transfer. SIP-010's `transfer`
-      // itself already asserts tx-sender == sender-arg on-chain, which is
-      // the real guard here; the post-condition was redundant client-side
-      // defense that was actively breaking every transfer. `address` below
-      // is a best-effort hint (not all wallets honor it) to sign with the
-      // same account we just asserted as `sender`.
       const response = await request('stx_callContract', {
         contract: `${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`,
         functionName: 'transfer',
@@ -282,7 +276,7 @@ export function useStacksWallet() {
         postConditions: [],
         postConditionMode: 'allow',
         network: 'mainnet',
-        address: currentSender,
+        address: senderAddress,
       });
 
       console.log('Transfer TX:', response.txid);
@@ -442,10 +436,10 @@ export function useStacksWallet() {
 
       console.log('Approve TX:', response.txid);
       setIsLoading(false);
-      
+
       // Refresh balance after a delay
       setTimeout(() => refreshBalance(), 5000);
-      
+
       return response.txid;
     } catch (error) {
       setIsLoading(false);
