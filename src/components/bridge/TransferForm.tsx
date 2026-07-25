@@ -15,7 +15,7 @@ interface TransferFormProps {
   usdcxBalance: string;
   onConnect: () => void;
   onDisconnect: () => void;
-  onTransfer: (recipient: string, amount: string, memo?: string) => Promise<string | null>;
+  onTransfer: (recipient: string, amount: string) => Promise<string | null>;
   isLoading: boolean;
 }
 
@@ -32,7 +32,6 @@ export function TransferForm({
 }: TransferFormProps) {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [memo, setMemo] = useState("");
   const [step, setStep] = useState<TransferStep>('input');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +49,7 @@ export function TransferForm({
     setStep('transferring');
     
     try {
-      const hash = await onTransfer(recipient, amount, memo || undefined);
+      const hash = await onTransfer(recipient, amount);
       if (hash) {
         setTxHash(hash);
         setStep('complete');
@@ -67,7 +66,6 @@ export function TransferForm({
   const handleReset = () => {
     setAmount("");
     setRecipient("");
-    setMemo("");
     setStep('input');
     setTxHash(null);
     setError(null);
@@ -229,19 +227,6 @@ export function TransferForm({
               <CheckCircle2 className="w-4 h-4" /> Valid Stacks address
             </p>
           )}
-        </div>
-
-        {/* Optional Memo */}
-        <div className="bg-secondary rounded-xl p-4 space-y-3">
-          <Label className="text-muted-foreground">Memo (Optional)</Label>
-          <Input
-            type="text"
-            placeholder="Add a note to your transfer"
-            value={memo}
-            onChange={(e) => setMemo(e.target.value)}
-            className="text-sm"
-            disabled={step !== 'input'}
-          />
         </div>
 
         {/* Error Display */}
