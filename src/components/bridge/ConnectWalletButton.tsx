@@ -1,11 +1,12 @@
 
 import { appKit } from '@/lib/reown-config';
 import { useAppKitAccount, useAppKitNetwork } from '@reown/appkit/react';
-import { Wallet, LogOut } from 'lucide-react';
+import { Wallet, LogOut, FileText } from 'lucide-react';
 import { useDisconnect } from '@reown/appkit/react';
 import { useStacksWallet } from '@/hooks/useStacksWallet';
 import { useState, useRef } from 'react';
 import { useBalance } from 'wagmi';
+import { Link } from 'react-router-dom';
 
 
 export function ConnectWalletButton() {
@@ -81,6 +82,15 @@ export function ConnectWalletButton() {
 
   return (
     <div className="flex items-center gap-2 sm:gap-3">
+      {/* Hermes Trail (transaction records) */}
+      <Link
+        to="/my-bridges"
+        title="Hermes Trail"
+        className="flex items-center justify-center p-2 rounded-xl bg-secondary/50 border border-primary/20 hover:border-primary/50 hover:bg-secondary transition-all duration-200"
+      >
+        <FileText className="w-4 h-4 text-foreground" />
+      </Link>
+
       {/* Network Selector */}
       <button
         onClick={() => appKit.open({ view: 'Networks' })}
