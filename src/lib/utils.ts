@@ -52,6 +52,24 @@ export function formatFeeUsd(amount: string | number | null | undefined): string
   return formatUsd(value);
 }
 
+export function truncateAddress(addr: string | null | undefined, chars = 6): string {
+  if (!addr) return '—';
+  if (addr.length <= chars * 2 + 3) return addr;
+  return `${addr.slice(0, chars)}...${addr.slice(-4)}`;
+}
+
+/** Relative time label ("3m ago", "2h ago") for a transaction timestamp. */
+export function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 /**
  * Filter free-text amount input down to a plain non-negative decimal string.
  * Native `<input type="number">` still lets users type "e", "+", "-", or
