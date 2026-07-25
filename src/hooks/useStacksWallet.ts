@@ -6,8 +6,9 @@ import {
   getLocalStorage, 
   request 
 } from '@stacks/connect';
-import { Cl, Pc } from '@stacks/transactions';
+import { Cl } from '@stacks/transactions';
 import { hiroFetch } from '@/lib/hiro-api';
+import { createTrackedTransaction, reportLeg, updateTrackedStatus } from '@/lib/tracking-client';
 
 // USDCx contract details on mainnet
 const USDCX_CONTRACT = {
@@ -21,6 +22,84 @@ const USDCX_V1_CONTRACT = {
   address: import.meta.env.VITE_USDCX_V1_ADDRESS || 'SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE', // Default mainnet address
   name: 'usdcx-v1',
 };
+
+/**
+ * Reads the connected mainnet Stacks address directly from wallet storage,
+ * fresh, rather than trusting a value cached in React state from whenever
+ * connectWallet last ran. usdcx's transfer function asserts on-chain that
+ * tx-sender equals the `sender` argument we pass it - if the wallet's
+ * actual active account has since diverged from our cached `stacksAddress`
+ * (e.g. the user switched accounts inside the extension), signing with the
+ * real active account while asserting a stale one as `sender` aborts with
+ * `(err u4)`. Re-deriving this immediately before building each contract
+ * call keeps the two in sync.
+ */
+function getCurrentMainnetStacksAddress(): string | null {
+  const storage = getLocalStorage();
+  const stxAddresses = storage?.addresses?.stx;
+  if (!stxAddresses || stxAddresses.length === 0) return null;
+  const mainnetAddr = stxAddresses.find((a: { address: string }) => a.address.startsWith('SP'));
+  return mainnetAddr?.address || stxAddresses[0]?.address || null;
+}
+
+/**
+ * Poll a Stacks tx until it confirms (success/abort) or the window elapses,
+ * in the background - never awaited by the caller, since a transfer already
+ * returns its txid to the user immediately (matching TransferForm's
+ * existing "Transfer Submitted!" UX). This is what turns that submission
+ * into a real "completed"/"failed" tracked status once it actually confirms
+ * on-chain, mirroring useWithdrawStatus's checkStacksBurnStatus.
+ */
+async function pollTransferConfirmation(
+  trackedId: string | null,
+  txId: string,
+  maxWaitMs = 5 * 60_000,
+  pollIntervalMs = 10_000
+): Promise<void> {
+  if (!trackedId) return;
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const res = await hiroFetch(`https://api.hiro.so/extended/v1/tx/${txId}`);
+      const data = await res.json();
+      if (data.tx_status === 'success') {
+        reportLeg(trackedId, {
+          legType: 'stacks_transfer',
+          fromChain: 'Stacks',
+          toChain: 'Stacks',
+          txHash: txId,
+          status: 'confirmed',
+        });
+        updateTrackedStatus(trackedId, { status: 'completed' });
+        return;
+      }
+      if (typeof data.tx_status === 'string' && data.tx_status.startsWith('abort')) {
+        reportLeg(trackedId, {
+          legType: 'stacks_transfer',
+          fromChain: 'Stacks',
+          toChain: 'Stacks',
+          txHash: txId,
+          status: 'failed',
+          errorMessage: data.vm_error ?? 'Transfer transaction aborted on-chain',
+        });
+        updateTrackedStatus(trackedId, { status: 'failed', errorMessage: data.vm_error ?? 'Transfer aborted on-chain' });
+        return;
+      }
+    } catch (error) {
+      console.warn('[useStacksWallet] Error polling transfer confirmation:', error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  // Timed out without a definitive on-chain result - leave it for the
+  // backend's own on-chain audit to reconcile later rather than guessing.
+  reportLeg(trackedId, {
+    legType: 'stacks_transfer',
+    fromChain: 'Stacks',
+    toChain: 'Stacks',
+    txHash: txId,
+    status: 'unknown',
+  });
+}
 
 export function useStacksWallet() {
   const [stacksAddress, setStacksAddress] = useState<string | null>(null);
@@ -82,22 +161,11 @@ export function useStacksWallet() {
   useEffect(() => {
     const checkConnection = () => {
       if (checkIsConnected()) {
-        const storage = getLocalStorage();
-        
-        // The new API stores addresses differently
-        const stxAddresses = storage?.addresses?.stx;
-        if (stxAddresses && stxAddresses.length > 0) {
-          // Find mainnet address (starts with SP)
-          const mainnetAddr = stxAddresses.find((a: { address: string }) =>
-            a.address.startsWith('SP')
-          );
-          const address = mainnetAddr?.address || stxAddresses[0]?.address;
-
-          if (address) {
-            setStacksAddress(address);
-            setIsConnected(true);
-            fetchUsdcxBalance(address);
-          }
+        const address = getCurrentMainnetStacksAddress();
+        if (address) {
+          setStacksAddress(address);
+          setIsConnected(true);
+          fetchUsdcxBalance(address);
         }
       }
     };
@@ -108,28 +176,17 @@ export function useStacksWallet() {
   const connectWallet = useCallback(async () => {
     try {
       setIsLoading(true);
-      
+
       await connect({
         forceWalletSelect: true,
         approvedProviderIds: ['LeatherProvider', 'XverseProviders.BitcoinProvider'],
       });
-      
-      // Get addresses from local storage after connect
-      const storage = getLocalStorage();
-      
-      const stxAddresses = storage?.addresses?.stx;
-      if (stxAddresses && stxAddresses.length > 0) {
-        // Find mainnet address (starts with SP)
-        const mainnetAddr = stxAddresses.find((a: { address: string }) =>
-          a.address.startsWith('SP')
-        );
-        const address = mainnetAddr?.address || stxAddresses[0]?.address;
 
-        if (address) {
-          setStacksAddress(address);
-          setIsConnected(true);
-          fetchUsdcxBalance(address);
-        }
+      const address = getCurrentMainnetStacksAddress();
+      if (address) {
+        setStacksAddress(address);
+        setIsConnected(true);
+        fetchUsdcxBalance(address);
       }
       setIsLoading(false);
     } catch (error) {
@@ -166,6 +223,19 @@ export function useStacksWallet() {
 
     setIsLoading(true);
 
+    // Fired now (not awaited) so it runs in the background while the actual
+    // transfer proceeds - reportLeg/updateTrackedStatus accept this promise
+    // directly, so nothing here ever blocks on tracking.
+    const trackedTxPromise = createTrackedTransaction({
+      stacksAddress,
+      recipientAddress: recipient,
+      bridgeType: 'stacks_transfer',
+      sourceChain: 'Stacks',
+      destinationChain: 'Stacks',
+      amount,
+      speed: 'FAST',
+    });
+
     try {
       // Convert amount to micro-units (6 decimals)
       const parsedAmount = parseFloat(amount);
@@ -178,38 +248,68 @@ export function useStacksWallet() {
       const microAmount = BigInt(Math.floor(parsedAmount * 1_000_000));
       console.log('micro amount:', microAmount);
 
-      // Create post-condition using the Pc builder API
-      const postCondition = Pc.principal(stacksAddress)
-        .willSendEq(microAmount)
-        .ft(`${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`, USDCX_CONTRACT.assetName);
+      // Re-derive fresh rather than trusting the closure's cached
+      // `stacksAddress` - see getCurrentMainnetStacksAddress's own comment.
+      // usdcx's transfer asserts tx-sender == sender on-chain (err u4 if
+      // not), so the `sender` argument below and the account that actually
+      // signs must agree.
+      const currentSender = getCurrentMainnetStacksAddress() ?? stacksAddress;
 
       // Build function arguments using Cl helpers
       const functionArgs = [
         Cl.uint(microAmount),
-        Cl.principal(stacksAddress),
+        Cl.principal(currentSender),
         Cl.principal(recipient),
         memo ? Cl.some(Cl.bufferFromUtf8(memo)) : Cl.none(),
       ];
 
-      // Use the new request API for contract calls
+      // No post-condition here, deliberately - see the matching comment on
+      // burnUsdcx's request() call below. A Pc.principal(stacksAddress)
+      // post-condition asserts a specific address sent the tokens, but the
+      // wallet extension's actual active signing account isn't guaranteed
+      // to match our cached `stacksAddress` app state - a mismatch there is
+      // exactly what surfaced as a generic "Internal error" from the wallet
+      // (not a normal user-rejection) on transfer. SIP-010's `transfer`
+      // itself already asserts tx-sender == sender-arg on-chain, which is
+      // the real guard here; the post-condition was redundant client-side
+      // defense that was actively breaking every transfer. `address` below
+      // is a best-effort hint (not all wallets honor it) to sign with the
+      // same account we just asserted as `sender`.
       const response = await request('stx_callContract', {
         contract: `${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`,
         functionName: 'transfer',
         functionArgs,
-        postConditions: [postCondition],
+        postConditions: [],
+        postConditionMode: 'allow',
         network: 'mainnet',
+        address: currentSender,
       });
 
       console.log('Transfer TX:', response.txid);
       setIsLoading(false);
-      
+
+      reportLeg(trackedTxPromise, {
+        legType: 'stacks_transfer',
+        fromChain: 'Stacks',
+        toChain: 'Stacks',
+        txHash: response.txid,
+        status: 'submitted',
+      });
+      updateTrackedStatus(trackedTxPromise, { status: 'in_progress' });
+      // Confirmation is polled in the background - the transfer already
+      // returns its txid to the user immediately, matching TransferForm's
+      // existing "Transfer Submitted!" UX (no monitoring wait here).
+      trackedTxPromise.then((id) => void pollTransferConfirmation(id, response.txid));
+
       // Refresh balance after a delay
       setTimeout(() => refreshBalance(), 5000);
-      
+
       return response.txid;
     } catch (error) {
       setIsLoading(false);
       console.error('Transfer error:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      updateTrackedStatus(trackedTxPromise, { status: 'failed', errorMessage: message });
       throw error;
     }
   }, [stacksAddress, refreshBalance]);
@@ -289,6 +389,7 @@ export function useStacksWallet() {
         postConditions: [],
         postConditionMode: 'allow',
         network: 'mainnet',
+        address: getCurrentMainnetStacksAddress() ?? stacksAddress,
       });
 
       console.log('Burn TX:', response.txid);
@@ -336,6 +437,7 @@ export function useStacksWallet() {
         functionArgs,
         postConditions: [],
         network: 'mainnet',
+        address: getCurrentMainnetStacksAddress() ?? stacksAddress,
       });
 
       console.log('Approve TX:', response.txid);
