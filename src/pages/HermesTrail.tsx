@@ -156,34 +156,53 @@ const HermesTrail = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
 
-  // Self-heal: a Stacks-bound bridge only gets reported "completed" if the
-  // same browser tab is still open ~10-20 minutes later when the mint
-  // actually lands - close it early and the transaction sits at
-  // pending/in_progress forever, even though the funds arrived, until
-  // someone happens to run the admin's on-chain audit. Since Hermes Trail
-  // already knows the Stacks recipient and start time, check directly here
-  // too so the fix lands the moment the user comes back to check, not
-  // whenever an admin next runs a sweep.
-  const reconcileStacksArrivals = useCallback(async (txs: TrackedTransaction[]) => {
-    const candidates = txs.filter(
+  // Self-heal stuck transactions. Two independent causes, handled together:
+  //
+  //  1. Stacks-bound bridges (eth_to_stacks / evm_to_evm_to_stacks) only get
+  //     reported "completed" if the same tab is still open ~10-20 min later
+  //     when the mint lands. Close it early and it sits pending/in_progress
+  //     forever even though the funds arrived. Check Hiro directly for the
+  //     mint here so the fix lands when the user comes back, not whenever an
+  //     admin next runs a sweep.
+  //
+  //  2. evm_to_evm bridges complete synchronously (no attestation gap), so
+  //     the frontend reports a *confirmed* cctp_burn_mint leg the moment the
+  //     whole transfer is done - and only then. But the follow-up
+  //     "completed" status update is fire-and-forget: a single lost PATCH
+  //     (Render cold-start, network blip, 6s timeout) leaves the record at
+  //     in_progress with a confirmed leg and no fee, exactly the symptom
+  //     seen. A confirmed cctp_burn_mint on an evm_to_evm tx is definitive
+  //     completion proof on its own, so heal it with no network call at all.
+  const reconcilePendingArrivals = useCallback(async (txs: TrackedTransaction[]) => {
+    const isPending = (t: TrackedTransaction) => t.status === 'pending' || t.status === 'in_progress';
+
+    // Branch 2: evm_to_evm with an already-confirmed cctp_burn_mint leg -
+    // no lookup needed.
+    const evmHealed = txs.filter(
       (t) =>
-        (t.status === 'pending' || t.status === 'in_progress') &&
+        isPending(t) &&
+        t.bridgeType === 'evm_to_evm' &&
+        t.legs.some((l) => l.legType === 'cctp_burn_mint' && l.status === 'confirmed')
+    );
+    for (const tx of evmHealed) {
+      updateTrackedStatus(tx._id, { status: 'completed' });
+    }
+
+    // Branch 1: Stacks-bound bridges - check Hiro for the actual mint.
+    const stacksCandidates = txs.filter(
+      (t) =>
+        isPending(t) &&
         (t.bridgeType === 'eth_to_stacks' || t.bridgeType === 'evm_to_evm_to_stacks') &&
         !!t.stacksAddress
     );
-    if (candidates.length === 0) return;
-
     const checks = await Promise.all(
-      candidates.map(async (tx) => ({
+      stacksCandidates.map(async (tx) => ({
         tx,
         mint: await findUsdcxMintSince(tx.stacksAddress as string, tx.createdAt),
       }))
     );
-    const confirmed = checks.filter((c) => c.mint);
-    if (confirmed.length === 0) return;
-
-    const nowIso = new Date().toISOString();
-    for (const { tx, mint } of confirmed) {
+    const stacksConfirmed = checks.filter((c) => c.mint);
+    for (const { tx, mint } of stacksConfirmed) {
       reportLeg(tx._id, {
         legType: 'stacks_mint',
         fromChain: 'Ethereum',
@@ -194,12 +213,19 @@ const HermesTrail = () => {
       updateTrackedStatus(tx._id, { status: 'completed' });
     }
 
+    if (evmHealed.length === 0 && stacksConfirmed.length === 0) return;
+
     // Reflect it immediately rather than waiting on the next poll/refresh -
     // the backend writes above are fire-and-forget but will have landed by
     // the time anyone reloads this page again regardless.
+    const nowIso = new Date().toISOString();
+    const evmHealedIds = new Set(evmHealed.map((t) => t._id));
     setTransactions((prev) =>
       prev?.map((t) => {
-        const hit = confirmed.find((c) => c.tx._id === t._id);
+        if (evmHealedIds.has(t._id)) {
+          return { ...t, status: 'completed' as const, completedAt: t.completedAt ?? nowIso };
+        }
+        const hit = stacksConfirmed.find((c) => c.tx._id === t._id);
         if (!hit) return t;
         return {
           ...t,
@@ -230,12 +256,12 @@ const HermesTrail = () => {
     if (result) {
       setTransactions(result.items);
       setLoadFailed(false);
-      void reconcileStacksArrivals(result.items);
+      void reconcilePendingArrivals(result.items);
     } else {
       setLoadFailed(true);
     }
     setIsLoading(false);
-  }, [ethereumAddress, stacksAddress, reconcileStacksArrivals]);
+  }, [ethereumAddress, stacksAddress, reconcilePendingArrivals]);
 
   useEffect(() => {
     setTransactions(null);
