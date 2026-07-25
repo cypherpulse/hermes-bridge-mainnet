@@ -8,6 +8,7 @@ import { isValidStacksAddress } from "@/lib/stacks-address";
 import { toast } from "sonner";
 import { formatUsd, sanitizeAmountInput } from "@/lib/utils";
 import { friendlyErrorMessage } from "@/lib/error-messages";
+import { LargeAmountConfirm, isLargeAmount } from "@/components/bridge/LargeAmountConfirm";
 
 interface TransferFormProps {
   isConnected: boolean;
@@ -32,6 +33,7 @@ export function TransferForm({
 }: TransferFormProps) {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [largeConfirmed, setLargeConfirmed] = useState(false);
   const [step, setStep] = useState<TransferStep>('input');
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +42,8 @@ export function TransferForm({
   const balance = parseFloat(usdcxBalance) || 0;
   const hasEnoughBalance = parsedAmount > 0 && parsedAmount <= balance;
   const isValidRecipient = recipient ? isValidStacksAddress(recipient) : false;
-  const canTransfer = hasEnoughBalance && isValidRecipient && !isLoading;
+  const largeAmountOk = !isLargeAmount(amount) || largeConfirmed;
+  const canTransfer = hasEnoughBalance && isValidRecipient && largeAmountOk && !isLoading;
 
   const handleTransfer = async () => {
     if (!canTransfer) return;
@@ -66,6 +69,7 @@ export function TransferForm({
   const handleReset = () => {
     setAmount("");
     setRecipient("");
+    setLargeConfirmed(false);
     setStep('input');
     setTxHash(null);
     setError(null);
@@ -73,6 +77,7 @@ export function TransferForm({
 
   const handleMaxAmount = () => {
     setAmount(usdcxBalance);
+    setLargeConfirmed(false);
   };
 
   if (!isConnected) {
@@ -186,7 +191,7 @@ export function TransferForm({
               inputMode="decimal"
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
+              onChange={(e) => { setAmount(sanitizeAmountInput(e.target.value)); setLargeConfirmed(false); }}
               className="text-2xl font-bold bg-transparent border-none focus-visible:ring-0 px-0"
               disabled={step !== 'input'}
             />
@@ -228,6 +233,15 @@ export function TransferForm({
             </p>
           )}
         </div>
+
+        {/* Large-amount guardrail */}
+        {step === 'input' && (
+          <LargeAmountConfirm
+            amount={amount}
+            confirmed={largeConfirmed}
+            onConfirmedChange={setLargeConfirmed}
+          />
+        )}
 
         {/* Error Display */}
         {error && (

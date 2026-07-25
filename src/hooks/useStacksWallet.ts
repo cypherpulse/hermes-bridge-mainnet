@@ -6,7 +6,7 @@ import {
   getLocalStorage,
   request
 } from '@stacks/connect';
-import { Cl } from '@stacks/transactions';
+import { Cl, Pc } from '@stacks/transactions';
 import { hiroFetch } from '@/lib/hiro-api';
 import { createTrackedTransaction, reportLeg, updateTrackedStatus } from '@/lib/tracking-client';
 
@@ -269,12 +269,24 @@ export function useStacksWallet() {
         Cl.none(),
       ];
 
+      // Now that signing is verified to use `senderAddress` as tx-sender
+      // (confirmed on-chain), a fungible post-condition is safe to add back:
+      // it makes Stacks itself guarantee the tx moves EXACTLY this much USDCx
+      // from the sender and nothing more. Combined with the default 'deny'
+      // mode, any unexpected asset movement aborts the transaction on-chain.
+      // (This was previously removed only because a stale `sender` made the
+      // post-condition name the wrong principal and abort every transfer;
+      // that mismatch is fixed.)
+      const postCondition = Pc.principal(senderAddress)
+        .willSendEq(microAmount)
+        .ft(`${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`, USDCX_CONTRACT.assetName);
+
       const response = await request('stx_callContract', {
         contract: `${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`,
         functionName: 'transfer',
         functionArgs,
-        postConditions: [],
-        postConditionMode: 'allow',
+        postConditions: [postCondition],
+        postConditionMode: 'deny',
         network: 'mainnet',
         address: senderAddress,
       });

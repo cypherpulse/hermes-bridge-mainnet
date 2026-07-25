@@ -17,6 +17,7 @@ import type { BridgeStep as ProgressStep } from "@/hooks/useMultiChainBridge";
 import { formatUsd, formatFeeUsd, formatTokenAmount, sanitizeAmountInput } from "@/lib/utils";
 import { friendlyErrorMessage } from "@/lib/error-messages";
 import { createTrackedTransaction, reportLeg, updateTrackedStatus } from "@/lib/tracking-client";
+import { LargeAmountConfirm, isLargeAmount } from "@/components/bridge/LargeAmountConfirm";
 
 interface BridgeFormProps {
   isConnected: boolean;
@@ -47,6 +48,7 @@ export function BridgeForm({
 }: BridgeFormProps) {
   const [amount, setAmount] = useState("");
   const [stacksAddress, setStacksAddress] = useState("");
+  const [largeConfirmed, setLargeConfirmed] = useState(false);
   const [phase, setPhase] = useState<FormPhase>('input');
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -119,7 +121,8 @@ export function BridgeForm({
   const totalRequired = parsedAmount + parseFloat(calculateProtocolFee(amount || '0').feeUsdc);
   const hasEnoughBalance = parsedAmount > 0 && totalRequired <= balance;
   const isValidAddress = stacksAddress ? isValidStacksAddress(stacksAddress) : false;
-  const canProceed = hasEnoughBalance && isValidAddress && parseFloat(ethBalance) > 0;
+  const largeAmountOk = !isLargeAmount(amount) || largeConfirmed;
+  const canProceed = hasEnoughBalance && isValidAddress && largeAmountOk && parseFloat(ethBalance) > 0;
 
   const updateProgressStep = (id: string, updates: Partial<ProgressStep>) => {
     setProgressSteps(prev => prev.map(s => (s.id === id ? { ...s, ...updates } : s)));
@@ -240,6 +243,7 @@ export function BridgeForm({
   const handleReset = () => {
     setAmount("");
     setStacksAddress("");
+    setLargeConfirmed(false);
     setPhase('input');
     setProgressSteps([]);
     setTxHash(null);
@@ -248,6 +252,7 @@ export function BridgeForm({
   };
 
   const handleMaxAmount = () => {
+    setLargeConfirmed(false);
     // Leave room for the Hermes fee, which is charged on top of the amount.
     const bal = parseFloat(usdcBalance) || 0;
     if (bal <= 0) {
@@ -445,7 +450,7 @@ export function BridgeForm({
               inputMode="decimal"
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
+              onChange={(e) => { setAmount(sanitizeAmountInput(e.target.value)); setLargeConfirmed(false); }}
               className="text-2xl font-bold bg-transparent border-none focus-visible:ring-0 px-0"
               disabled={phase !== 'input'}
             />
@@ -560,6 +565,15 @@ export function BridgeForm({
               </p>
             </div>
           </div>
+        )}
+
+        {/* Large-amount guardrail */}
+        {phase === 'input' && (
+          <LargeAmountConfirm
+            amount={amount}
+            confirmed={largeConfirmed}
+            onConfirmedChange={setLargeConfirmed}
+          />
         )}
 
         {/* Error Display */}

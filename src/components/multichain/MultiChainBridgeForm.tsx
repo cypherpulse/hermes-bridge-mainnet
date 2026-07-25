@@ -31,6 +31,7 @@ import { type CCTPChainId, CCTP_CHAINS } from '@/lib/multichain-bridge-config';
 import { BRIDGE_CONFIG } from '@/lib/bridge-config';
 import { calculateProtocolFee, type TransferSpeedPreference } from '@/lib/cctp-fees';
 import { cn, formatUsd, formatFeeUsd, formatTokenAmount, sanitizeAmountInput } from '@/lib/utils';
+import { LargeAmountConfirm, isLargeAmount } from '@/components/bridge/LargeAmountConfirm';
 
 interface MultiChainBridgeFormProps {
   isWalletConnected: boolean;
@@ -47,6 +48,7 @@ export function MultiChainBridgeForm({
   const [amount, setAmount] = useState('');
   const [recipientAddress, setRecipientAddress] = useState('');
   const [speed, setSpeed] = useState<TransferSpeedPreference>('FAST');
+  const [largeConfirmed, setLargeConfirmed] = useState(false);
 
   // Hooks
   const {
@@ -125,6 +127,7 @@ export function MultiChainBridgeForm({
   const isValidAmount = amount && parseFloat(amount) > 0;
   const hasEnoughBalance = parseFloat(amount || '0') <= parseFloat(selectedSourceBalance);
   const isValidRecipient = !isToStacks || (!!recipientAddress && isValidStacksAddress(recipientAddress));
+  const largeAmountOk = !isLargeAmount(amount) || largeConfirmed;
   const canSubmit =
     isConnected &&
     sourceChain &&
@@ -132,6 +135,7 @@ export function MultiChainBridgeForm({
     isValidAmount &&
     hasEnoughBalance &&
     isValidRecipient &&
+    largeAmountOk &&
     !isFetchingBalance &&
     !bridgeState.isLoading;
 
@@ -153,6 +157,7 @@ export function MultiChainBridgeForm({
   // exceeds the balance and the transfer fails. Floor to 6 decimals (never
   // round up past the real balance) and keep full precision.
   const handleMax = () => {
+    setLargeConfirmed(false);
     const maxAmount = parseFloat(selectedSourceBalance);
     if (maxAmount <= 0) {
       setAmount('0');
@@ -218,7 +223,7 @@ export function MultiChainBridgeForm({
                 inputMode="decimal"
                 placeholder="Enter amount"
                 value={amount}
-                onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
+                onChange={(e) => { setAmount(sanitizeAmountInput(e.target.value)); setLargeConfirmed(false); }}
                 className="text-2xl font-bold flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto p-0"
               />
               <div className="flex items-center gap-2 shrink-0">
@@ -342,6 +347,15 @@ export function MultiChainBridgeForm({
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>Insufficient USDC balance</AlertDescription>
           </Alert>
+        )}
+
+        {/* Large-amount guardrail */}
+        {!bridgeState.isLoading && (
+          <LargeAmountConfirm
+            amount={amount}
+            confirmed={largeConfirmed}
+            onConfirmedChange={setLargeConfirmed}
+          />
         )}
 
         {/* Submit Button */}

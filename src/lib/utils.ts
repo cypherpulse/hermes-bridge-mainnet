@@ -75,13 +75,17 @@ export function timeAgo(iso: string | null | undefined): string {
  * Native `<input type="number">` still lets users type "e", "+", "-", or
  * multiple decimal points before validation kicks in - which parseFloat
  * happily accepts (e.g. "1e5" -> 100000), risking an accidental huge amount.
- * Strips anything that isn't a digit or a single decimal point.
+ * Strips anything that isn't a digit or a single decimal point, and caps the
+ * fractional part at USDC's 6 decimals - more than that makes parseUnits(_, 6)
+ * throw, which would otherwise surface as an ungraceful error at submit time.
  */
 export function sanitizeAmountInput(raw: string): string {
   let cleaned = raw.replace(/[^0-9.]/g, '');
   const firstDot = cleaned.indexOf('.');
   if (firstDot !== -1) {
-    cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+    const intPart = cleaned.slice(0, firstDot);
+    const fracPart = cleaned.slice(firstDot + 1).replace(/\./g, '').slice(0, 6);
+    cleaned = `${intPart}.${fracPart}`;
   }
   return cleaned;
 }

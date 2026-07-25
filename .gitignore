@@ -115,3 +115,4 @@ playwright/.cache/
 # Miscellaneous
 *.swp
 *.swo
+.claude
