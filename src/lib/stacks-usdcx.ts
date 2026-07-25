@@ -108,6 +108,45 @@ export async function findRecentUsdcxMintTx(
   }
 }
 
+/**
+ * One-shot check for whether a confirmed USDCx mint has landed for this
+ * address since a given timestamp - used to self-heal a tracked
+ * transaction's status client-side (e.g. on Hermes Trail) when the browser
+ * that started the bridge closed before it could report completion itself.
+ * Unlike findRecentUsdcxMintTx (which excludes a snapshot of pre-existing
+ * tx-ids captured at bridge start), this compares against an absolute
+ * timestamp - the tracked transaction's own createdAt - so it works without
+ * having been present for the whole bridge.
+ */
+export async function findUsdcxMintSince(
+  stacksAddress: string,
+  sinceIso: string
+): Promise<UsdcxMintTx | null> {
+  try {
+    const response = await hiroFetch(
+      `https://api.hiro.so/extended/v1/address/${stacksAddress}/transactions?limit=30`
+    );
+    const data = await response.json();
+    const since = new Date(sinceIso).getTime();
+
+    for (const tx of data.results || []) {
+      if (
+        tx.tx_type === 'contract_call' &&
+        tx.tx_status === 'success' &&
+        tx.contract_call?.contract_id === USDCX_V1_CONTRACT &&
+        tx.contract_call?.function_name === 'mint'
+      ) {
+        const minedAt = new Date(tx.burn_block_time_iso ?? tx.receipt_time_iso ?? 0).getTime();
+        if (minedAt >= since) return { txId: tx.tx_id, confirmed: true };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('[stacks-usdcx] Error checking mint since timestamp:', error);
+    return null;
+  }
+}
+
 export interface UsdcxMintPollResult {
   status: 'complete' | 'timeout';
   txHash?: string;
