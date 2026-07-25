@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowDown, Loader2, ExternalLink, AlertCircle, CheckCircle2, Clock, Zap } from "lucide-react";
+import { ArrowDown, ExternalLink, AlertCircle, CheckCircle2, Zap } from "lucide-react";
+import { Link } from "react-router-dom";
 import { isValidStacksAddress } from "@/lib/stacks-address";
 import { toast } from "sonner";
-import { useBridgeStatus, type BridgeStatus } from "@/hooks/useBridgeStatus";
+import { useBridgeStatus } from "@/hooks/useBridgeStatus";
 import { useBridgeFeeQuote } from "@/hooks/useBridgeFeeQuote";
 import { BRIDGE_CONFIG } from "@/lib/bridge-config";
 import { calculateProtocolFee, type TransferSpeedPreference } from "@/lib/cctp-fees";
@@ -15,11 +16,18 @@ import { BridgeProgress } from "@/components/multichain/BridgeProgress";
 import type { BridgeStep as ProgressStep } from "@/hooks/useMultiChainBridge";
 import { formatUsd, formatFeeUsd, formatTokenAmount, sanitizeAmountInput } from "@/lib/utils";
 import { friendlyErrorMessage } from "@/lib/error-messages";
+import { createTrackedTransaction, reportLeg, updateTrackedStatus } from "@/lib/tracking-client";
 
 interface BridgeFormProps {
   isConnected: boolean;
+  ethereumAddress: string | null;
   usdcBalance: string;
   ethBalance: string;
+  // If the user has also connected a Stacks wallet (via the same "Connect
+  // Wallet" dropdown that supports both), prefill the recipient field with
+  // it instead of making them paste their own address - matches the
+  // multichain bridge form's behavior.
+  connectedStacksAddress?: string | null;
   onApprove: (amount: string) => Promise<string | null>;
   onPayFee: (amount: string) => Promise<string | null>;
   onDeposit: (amount: string, recipient: string, speed?: TransferSpeedPreference) => Promise<string | null>;
@@ -29,8 +37,10 @@ type FormPhase = 'input' | 'bridging' | 'monitoring' | 'complete';
 
 export function BridgeForm({
   isConnected,
+  ethereumAddress,
   usdcBalance,
   ethBalance,
+  connectedStacksAddress,
   onApprove,
   onPayFee,
   onDeposit,
@@ -45,6 +55,14 @@ export function BridgeForm({
 
   const bridgeStatus = useBridgeStatus();
 
+  // Persists the backend-tracked transaction promise across handleBridge
+  // (which creates it) and the separate status-watching effect below (which
+  // fires later, once Stacks-side monitoring resolves) - a ref survives
+  // across renders without needing to be a dependency anywhere. Stored as
+  // the raw promise (not an awaited id) so nothing ever has to block on
+  // tracking to use it - reportLeg/updateTrackedStatus accept it directly.
+  const trackedTxPromiseRef = useRef<Promise<string | null>>(Promise.resolve(null));
+
   // xReserve leg fee/speed preview, including the Hermes protocol fee -
   // collected as a separate USDC transfer to our treasury (see onPayFee),
   // since xReserve's depositToRemote has no fee-recipient parameter.
@@ -56,13 +74,43 @@ export function BridgeForm({
     includeProtocolFee: true,
   });
 
-  // Watch for bridge completion
+  // Watch for bridge completion / failure once Stacks-side monitoring takes
+  // over from handleBridge (see startMonitoring below).
   useEffect(() => {
     if (bridgeStatus.status === 'completed') {
       setPhase('complete');
       toast.success("🎉 USDCx minted successfully!");
+      reportLeg(trackedTxPromiseRef.current, {
+        legType: 'stacks_mint',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        txHash: bridgeStatus.stacksTxHash ?? undefined,
+        status: 'confirmed',
+      });
+      updateTrackedStatus(trackedTxPromiseRef.current, { status: 'completed' });
+    } else if (bridgeStatus.status === 'error') {
+      reportLeg(trackedTxPromiseRef.current, {
+        legType: 'stacks_mint',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        status: 'unknown',
+        errorMessage: bridgeStatus.errorMessage,
+      });
+      updateTrackedStatus(trackedTxPromiseRef.current, {
+        status: 'failed',
+        errorMessage: bridgeStatus.errorMessage,
+      });
     }
   }, [bridgeStatus.status]);
+
+  // Prefill the recipient with the connected Stacks wallet's own address, if
+  // any - only when the field is still empty, so it never clobbers something
+  // the user already typed (e.g. bridging to a different address).
+  useEffect(() => {
+    if (connectedStacksAddress && !stacksAddress) {
+      setStacksAddress(connectedStacksAddress);
+    }
+  }, [connectedStacksAddress]);
 
   const parsedAmount = parseFloat(amount) || 0;
   const balance = parseFloat(usdcBalance) || 0;
@@ -92,6 +140,23 @@ export function BridgeForm({
       { id: 'deposit', name: 'Deposit to xReserve', description: 'Deposit USDC to xReserve contract', status: 'pending' as const },
     ]);
 
+    // Fired now (not awaited) so it runs in the background while the actual
+    // bridge proceeds - reportLeg/updateTrackedStatus accept this promise
+    // directly, so nothing here ever blocks on tracking.
+    trackedTxPromiseRef.current = ethereumAddress
+      ? createTrackedTransaction({
+          ethereumAddress,
+          stacksAddress,
+          bridgeType: 'eth_to_stacks',
+          sourceChain: 'Ethereum',
+          destinationChain: 'Stacks',
+          amount,
+          speed,
+          protocolFeeUsdc: feeUsdc,
+          circleFeeUsdc: feeQuote?.estimatedCircleFeeUsdc,
+        })
+      : Promise.resolve(null);
+
     try {
       const approveHash = await onApprove(amount);
       if (!approveHash) {
@@ -101,6 +166,13 @@ export function BridgeForm({
         status: 'completed',
         txHash: approveHash,
         explorerUrl: `https://etherscan.io/tx/${approveHash}`,
+      });
+      reportLeg(trackedTxPromiseRef.current, {
+        legType: 'approve',
+        fromChain: 'Ethereum',
+        toChain: 'Ethereum',
+        txHash: approveHash,
+        status: 'confirmed',
       });
 
       if (hasFee) {
@@ -114,6 +186,13 @@ export function BridgeForm({
           txHash: feeHash,
           explorerUrl: `https://etherscan.io/tx/${feeHash}`,
         });
+        reportLeg(trackedTxPromiseRef.current, {
+          legType: 'fee_payment',
+          fromChain: 'Ethereum',
+          toChain: 'Ethereum',
+          txHash: feeHash,
+          status: 'confirmed',
+        });
       }
 
       updateProgressStep('deposit', { status: 'in-progress' });
@@ -125,6 +204,13 @@ export function BridgeForm({
         status: 'completed',
         txHash: depositHash,
         explorerUrl: `https://etherscan.io/tx/${depositHash}`,
+      });
+      reportLeg(trackedTxPromiseRef.current, {
+        legType: 'xreserve_deposit',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        txHash: depositHash,
+        status: 'confirmed',
       });
 
       setTxHash(depositHash);
@@ -138,6 +224,16 @@ export function BridgeForm({
       updateProgressStep(failingStepId, { status: 'failed', error: message });
       setError(message);
       toast.error(message);
+
+      const failedLegType = failingStepId === 'approve' ? 'approve' : failingStepId === 'fee' ? 'fee_payment' : 'xreserve_deposit';
+      reportLeg(trackedTxPromiseRef.current, {
+        legType: failedLegType,
+        fromChain: 'Ethereum',
+        toChain: failedLegType === 'xreserve_deposit' ? 'Stacks' : 'Ethereum',
+        status: 'failed',
+        errorMessage: message,
+      });
+      updateTrackedStatus(trackedTxPromiseRef.current, { status: 'failed', errorMessage: message });
     }
   };
 
@@ -180,100 +276,42 @@ export function BridgeForm({
   }
 
   if (phase === 'monitoring' && txHash) {
-    const getStatusInfo = (status: BridgeStatus) => {
-      switch (status) {
-        case 'eth_confirmed':
-          return { 
-            label: 'Ethereum Confirmed', 
-            description: 'Waiting for attestation service to detect deposit...',
-            progress: 25,
-            color: 'text-blue-500'
-          };
-        case 'attesting':
-          return { 
-            label: 'Attestation in Progress', 
-            description: '',
-            progress: 50,
-            color: 'text-yellow-500'
-          };
-        case 'minting':
-          return {
-            label: 'USDCx On The Way',
-            description: bridgeStatus.elapsedTime > 180
-              ? 'Your USDCx has arrived and is finalizing on-chain - this can occasionally take a few extra minutes.'
-              : 'USDCx detected on Stacks! Finalizing - usually done within about a minute.',
-            progress: 75,
-            color: 'text-green-500'
-          };
-        case 'completed':
-          return { 
-            label: 'Completed!', 
-            description: 'USDCx has been minted to your wallet!',
-            progress: 100,
-            color: 'text-green-500'
-          };
-        default:
-          return { 
-            label: 'Processing', 
-            description: 'Bridge in progress...',
-            progress: 10,
-            color: 'text-muted-foreground'
-          };
-      }
-    };
-
-    const statusInfo = getStatusInfo(bridgeStatus.status);
+    // Once submitted, this step needs no user action and no live countdown -
+    // Hermes Trail already tracks the real-time status, and staring at a
+    // ticking timer reads as "stuck" well before the ~10-20 minute Circle
+    // attestation actually finishes. Just reassure the user it's expected
+    // and normal, and let them check back (here or on Hermes Trail) whenever
+    // they like. The one exception: once a Stacks mint tx is actually
+    // detected, that's genuinely good news worth surfacing immediately.
+    const mintDetected = !!bridgeStatus.stacksTxHash;
 
     return (
       <Card className="bg-card/70 backdrop-blur-xl border-border/50 shadow-xl shadow-black/20 animate-in fade-in slide-in-from-bottom-4 duration-300">
         <CardContent className="pt-6">
           <div className="text-center py-8">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-secondary flex items-center justify-center relative">
-              {bridgeStatus.status === 'completed' ? (
-                <CheckCircle2 className="w-8 h-8 text-green-500 animate-in zoom-in-50 spin-in-45 duration-500" />
-              ) : (
-                <>
-                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                  <div className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
-                    <Clock className="w-3 h-3" />
-                  </div>
-                </>
-              )}
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-secondary flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8 text-green-500" />
             </div>
-            
-            <h3 className="text-2xl font-bold text-foreground mb-2">
-              {bridgeStatus.status === 'completed' ? '🎉 Bridge Complete!' : 'Bridging in Progress...'}
-            </h3>
-            
+
+            <h3 className="text-2xl font-bold text-foreground mb-2">Bridge Submitted!</h3>
+
             <p className="text-muted-foreground mb-4">
               {formatTokenAmount(amount)} USDC → {formatTokenAmount(amount)} USDCx
             </p>
 
-            {/* Progress bar */}
-            <div className="w-full bg-secondary rounded-full h-2 mb-4">
-              <div 
-                className="bg-primary h-2 rounded-full transition-all duration-500"
-                style={{ width: `${statusInfo.progress}%` }}
-              />
-            </div>
-
-            {/* Status */}
-            <div className={`text-sm font-medium ${statusInfo.color} mb-2`}>
-              {statusInfo.label}
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              {statusInfo.description}
-            </p>
-
-            {/* Timer */}
-            <div className="bg-secondary rounded-xl p-3 mb-4 inline-block">
-              <div className="flex items-center gap-2 text-sm">
-                <Clock className="w-4 h-4 text-muted-foreground" />
-                <span className="font-mono text-foreground">
-                  {bridgeStatus.formatElapsedTime(bridgeStatus.elapsedTime)}
-                </span>
-                <span className="text-muted-foreground">elapsed</span>
-              </div>
+            <div className={`rounded-xl p-4 mb-6 text-left border ${mintDetected ? 'bg-green-500/10 border-green-500/30' : 'bg-blue-500/10 border-blue-500/20'}`}>
+              {mintDetected ? (
+                <p className="text-sm text-green-400">
+                  🎉 USDCx detected on Stacks - finalizing now, usually done within about a minute.
+                </p>
+              ) : (
+                <p className="text-sm text-blue-300">
+                  <strong>No action needed.</strong> Circle's attestation service typically takes
+                  10-20 minutes (occasionally longer) to mint your USDCx on Stacks. You can safely
+                  close this tab - check <span className="font-medium">Hermes Trail</span> anytime
+                  to see the status.
+                </p>
+              )}
             </div>
 
             {/* Transaction Links */}
@@ -305,23 +343,15 @@ export function BridgeForm({
                   </a>
                 </div>
               )}
-
-              <a
-                href={`https://explorer.hiro.so/address/${stacksAddress}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-primary hover:underline flex items-center justify-center gap-2"
-              >
-                View Stacks Wallet
-                <ExternalLink className="w-4 h-4" />
-              </a>
             </div>
 
-            {bridgeStatus.status === 'completed' && (
-              <Button onClick={handleReset} className="gradient-bitcoin text-primary-foreground font-semibold px-8">
-                Bridge More
-              </Button>
-            )}
+            <Link
+              to="/my-bridges"
+              className="text-sm text-primary hover:underline inline-flex items-center gap-2"
+            >
+              Track status in Hermes Trail
+              <ExternalLink className="w-4 h-4" />
+            </Link>
           </div>
         </CardContent>
       </Card>
