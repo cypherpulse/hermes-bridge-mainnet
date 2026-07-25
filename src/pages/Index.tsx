@@ -207,6 +207,7 @@ const Index = () => {
   const [mode, setMode] = useState<'bridge' | 'withdraw'>('bridge');
   
   const {
+    address: ethAddress,
     isConnected: isEthConnected,
     ethBalance,
     usdcBalance,
@@ -346,8 +347,10 @@ const Index = () => {
                 {/* Bridge Form */}
                 <BridgeForm
                   isConnected={isEthConnected}
+                  ethereumAddress={ethAddress}
                   usdcBalance={usdcBalance}
                   ethBalance={ethBalance}
+                  connectedStacksAddress={isStacksConnected ? stacksAddress : null}
                   onApprove={approveUSDC}
                   onPayFee={payProtocolFee}
                   onDeposit={depositToStacks}
