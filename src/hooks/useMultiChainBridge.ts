@@ -26,6 +26,7 @@ import { encodeStacksAddress, isValidStacksAddress } from '@/lib/stacks-address'
 import { calculateBridgeFee, type BridgeFeeQuote, type TransferSpeedPreference } from '@/lib/cctp-fees';
 import { pollForUsdcxMint, type UsdcxMintTx } from '@/lib/stacks-usdcx';
 import { friendlyErrorMessage } from '@/lib/error-messages';
+import { createTrackedTransaction, reportLeg, updateTrackedStatus } from '@/lib/tracking-client';
 
 /**
  * Extract a specific failure reason from a Bridge Kit result, falling back
@@ -41,20 +42,25 @@ function describeBridgeFailure(result: { steps?: Array<{ name: string; state: st
 }
 
 /**
- * User-facing status line for the Stacks mint wait. Once a mint tx is
- * detected (even before it's confirmed), reassure the user their funds are
- * on the way with an ETA, rather than a bare "waiting..." ticker that reads
- * as stuck.
+ * User-facing status line for the Stacks mint wait. This step needs no
+ * wallet signature or user action at all, but a bare "waiting... (407s
+ * elapsed)" ticker reads as stuck/broken well before Circle's attestation
+ * (typically 10-20 minutes, occasionally longer) actually finishes.
+ * Explicitly reassure the user it's normal and requires nothing from them,
+ * and once a mint tx is detected, that their funds are already on the way.
  */
 function describeMintProgress(elapsedMs: number, mintTx: UsdcxMintTx | null): string {
-  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+  const elapsed = formatMinutesSeconds(elapsedMs);
   if (!mintTx) {
-    return `Waiting for Circle attestation service... (${elapsedSeconds}s elapsed)`;
+    if (elapsedMs < 30_000) {
+      return `Submitted! Waiting for Circle's attestation service to detect your deposit...`;
+    }
+    return `No action needed from you - Circle's attestation typically takes 10-20 minutes (occasionally longer). Your USDCx will be minted automatically to your Stacks address once it completes. (${elapsed} elapsed)`;
   }
   if (elapsedMs > 3 * 60 * 1000) {
-    return `Your USDCx has arrived and is finalizing on-chain - this can occasionally take a few extra minutes (${elapsedSeconds}s elapsed).`;
+    return `Your USDCx has arrived and is finalizing on-chain - this can occasionally take a few extra minutes (${elapsed} elapsed).`;
   }
-  return `USDCx detected on Stacks! Finalizing - usually done within about a minute (${elapsedSeconds}s elapsed).`;
+  return `USDCx detected on Stacks! Finalizing - usually done within about a minute (${elapsed} elapsed).`;
 }
 
 /**
@@ -494,7 +500,7 @@ export function useMultiChainBridge() {
       {
         id: 'xreserve-attestation',
         name: 'Attestation & Minting',
-        description: 'Waiting for Circle attestation service',
+        description: 'No action needed - this step completes automatically',
         status: 'pending',
       },
     ];
@@ -506,6 +512,18 @@ export function useMultiChainBridge() {
       steps,
       error: null,
       isCompleted: false,
+    });
+
+    // Fired now (not awaited) so it runs in the background while the actual
+    // bridge proceeds - only awaited later, right before it's first needed.
+    const trackedTxPromise = createTrackedTransaction({
+      ethereumAddress: address,
+      stacksAddress: stacksRecipient,
+      bridgeType: 'evm_to_evm_to_stacks',
+      sourceChain: sourceChainId,
+      destinationChain: 'Stacks',
+      amount,
+      speed: preferredSpeed,
     });
 
     try {
@@ -549,6 +567,14 @@ export function useMultiChainBridge() {
           : cctpQuote.speed === 'FAST'
             ? `Fast transfer (Circle fee ~${cctpQuote.estimatedCircleFeeUsdc} USDC)`
             : 'Standard transfer',
+      });
+      // The Hermes protocol fee and Circle's fee are both paid automatically
+      // as part of this burn transaction (Bridge Kit's customFee) - there's
+      // no separate tx to report as a leg, so patch the amounts onto the
+      // tracked transaction now that the live quote is known.
+      updateTrackedStatus(trackedTxPromise, {
+        protocolFeeUsdc: cctpQuote.protocolFeeUsdc,
+        circleFeeUsdc: cctpQuote.estimatedCircleFeeUsdc,
       });
 
       // Execute CCTP bridge and wait for completion
@@ -633,6 +659,13 @@ export function useMultiChainBridge() {
           ? `Minted on Ethereum: ${mintStep.txHash.slice(0, 10)}...${mintStep.txHash.slice(-6)}`
           : undefined,
       });
+      reportLeg(trackedTxPromise, {
+        legType: 'cctp_burn_mint',
+        fromChain: sourceChainId,
+        toChain: 'Ethereum',
+        txHash: mintStep?.txHash ?? cctpTxHash,
+        status: 'confirmed',
+      });
 
       currentStepIndexRef.current = 1;
       setBridgeState(prev => ({ ...prev, currentStepIndex: 1 }));
@@ -680,6 +713,7 @@ export function useMultiChainBridge() {
         args: [address, BRIDGE_CONFIG.X_RESERVE_CONTRACT as Address],
       }) as bigint;
 
+      let approveTxHash: string | undefined;
       if (allowance < value) {
         const approveHash = await walletClient.writeContract({
           address: BRIDGE_CONFIG.ETH_USDC_CONTRACT as Address,
@@ -690,19 +724,27 @@ export function useMultiChainBridge() {
           account: address,
         });
 
-        await mainnetClient.waitForTransactionReceipt({ 
+        await mainnetClient.waitForTransactionReceipt({
           hash: approveHash,
           timeout: 120000, // 2 minutes timeout
         });
-        
-        updateStep(2, { 
-          status: 'completed', 
+
+        updateStep(2, {
+          status: 'completed',
           txHash: approveHash,
           explorerUrl: `https://etherscan.io/tx/${approveHash}`,
         });
+        approveTxHash = approveHash;
       } else {
         updateStep(2, { status: 'completed' });
       }
+      reportLeg(trackedTxPromise, {
+        legType: 'approve',
+        fromChain: 'Ethereum',
+        toChain: 'Ethereum',
+        txHash: approveTxHash,
+        status: 'confirmed',
+      });
 
       currentStepIndexRef.current = 3;
       setBridgeState(prev => ({ ...prev, currentStepIndex: 3 }));
@@ -717,20 +759,38 @@ export function useMultiChainBridge() {
 
       if (!depositResult.success) {
         updateStep(3, { status: 'failed', error: depositResult.error });
+        reportLeg(trackedTxPromise, {
+          legType: 'xreserve_deposit',
+          fromChain: 'Ethereum',
+          toChain: 'Stacks',
+          txHash: depositResult.txHash,
+          status: depositResult.txHash ? 'unknown' : 'failed',
+          errorMessage: depositResult.error,
+        });
         throw new Error(depositResult.error || 'xReserve deposit failed');
       }
 
-      updateStep(3, { 
-        status: 'completed', 
+      updateStep(3, {
+        status: 'completed',
         txHash: depositResult.txHash,
         explorerUrl: `https://etherscan.io/tx/${depositResult.txHash}`,
+      });
+      reportLeg(trackedTxPromise, {
+        legType: 'xreserve_deposit',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        txHash: depositResult.txHash,
+        status: 'confirmed',
       });
 
       currentStepIndexRef.current = 4;
       setBridgeState(prev => ({ ...prev, currentStepIndex: 4 }));
 
       // Step 5: Attestation (includes minting)
-      updateStep(4, { status: 'in-progress' });
+      updateStep(4, {
+        status: 'in-progress',
+        description: "Submitted! No action needed - Circle's attestation typically takes 10-20 minutes.",
+      });
 
       console.log('Waiting for Circle attestation and minting...');
 
@@ -739,6 +799,13 @@ export function useMultiChainBridge() {
 
       if (!attestationComplete) {
         updateStep(4, { status: 'failed', error: 'Attestation timeout' });
+        reportLeg(trackedTxPromise, {
+          legType: 'stacks_mint',
+          fromChain: 'Ethereum',
+          toChain: 'Stacks',
+          status: 'unknown',
+          errorMessage: 'Attestation did not complete within timeout',
+        });
         throw new Error('Attestation did not complete within timeout');
       }
 
@@ -746,28 +813,39 @@ export function useMultiChainBridge() {
       await new Promise(resolve => setTimeout(resolve, 5000));
 
       updateStep(4, { status: 'completed' });
-
-      setBridgeState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        isCompleted: true,
-      }));
-
-      return true;
-    } catch (error: any) {
-      console.error('Bridge to Stacks failed:', error);
-
-      const currentIndex = currentStepIndexRef.current;
-      updateStep(currentIndex, {
-        status: 'failed',
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+      reportLeg(trackedTxPromise, {
+        legType: 'stacks_mint',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        status: 'confirmed',
       });
 
       setBridgeState(prev => ({
         ...prev,
         isLoading: false,
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+        isCompleted: true,
       }));
+
+      updateTrackedStatus(trackedTxPromise, { status: 'completed' });
+
+      return true;
+    } catch (error: any) {
+      console.error('Bridge to Stacks failed:', error);
+
+      const message = friendlyErrorMessage(error, 'Bridge failed');
+      const currentIndex = currentStepIndexRef.current;
+      updateStep(currentIndex, {
+        status: 'failed',
+        error: message,
+      });
+
+      setBridgeState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: message,
+      }));
+
+      updateTrackedStatus(trackedTxPromise, { status: 'failed', errorMessage: message });
 
       return false;
     }
@@ -807,7 +885,7 @@ export function useMultiChainBridge() {
       {
         id: 'xreserve-attestation',
         name: 'Attestation & Minting',
-        description: 'Waiting for Circle attestation service',
+        description: 'No action needed - this step completes automatically',
         status: 'pending',
       },
     ];
@@ -819,6 +897,18 @@ export function useMultiChainBridge() {
       steps,
       error: null,
       isCompleted: false,
+    });
+
+    // Fired now (not awaited) so it runs in the background while the actual
+    // bridge proceeds - only awaited later, right before it's first needed.
+    const trackedTxPromise = createTrackedTransaction({
+      ethereumAddress: address,
+      stacksAddress: stacksRecipient,
+      bridgeType: 'eth_to_stacks',
+      sourceChain: 'Ethereum',
+      destinationChain: 'Stacks',
+      amount,
+      speed: preferredSpeed,
     });
 
     try {
@@ -838,7 +928,7 @@ export function useMultiChainBridge() {
         chain: mainnet,
         transport: http(BRIDGE_CONFIG.ETH_RPC_URL),
       });
-      
+
       const allowance = await mainnetClient.readContract({
         address: BRIDGE_CONFIG.ETH_USDC_CONTRACT as Address,
         abi: ERC20_ABI,
@@ -846,6 +936,7 @@ export function useMultiChainBridge() {
         args: [address, BRIDGE_CONFIG.X_RESERVE_CONTRACT as Address],
       }) as bigint;
 
+      let approveTxHash: string | undefined;
       if (allowance < value) {
         const approveHash = await walletClient.writeContract({
           address: BRIDGE_CONFIG.ETH_USDC_CONTRACT as Address,
@@ -856,19 +947,28 @@ export function useMultiChainBridge() {
           account: address,
         });
 
-        await mainnetClient.waitForTransactionReceipt({ 
+        await mainnetClient.waitForTransactionReceipt({
           hash: approveHash,
           timeout: 120000, // 2 minutes timeout
         });
-        
-        updateStep(0, { 
-          status: 'completed', 
+
+        updateStep(0, {
+          status: 'completed',
           txHash: approveHash,
           explorerUrl: `https://etherscan.io/tx/${approveHash}`,
         });
+        approveTxHash = approveHash;
       } else {
         updateStep(0, { status: 'completed' });
       }
+
+      reportLeg(trackedTxPromise, {
+        legType: 'approve',
+        fromChain: 'Ethereum',
+        toChain: 'Ethereum',
+        txHash: approveTxHash,
+        status: 'confirmed',
+      });
 
       currentStepIndexRef.current = 1;
       setBridgeState(prev => ({ ...prev, currentStepIndex: 1 }));
@@ -880,20 +980,38 @@ export function useMultiChainBridge() {
 
       if (!depositResult.success) {
         updateStep(1, { status: 'failed', error: depositResult.error });
+        reportLeg(trackedTxPromise, {
+          legType: 'xreserve_deposit',
+          fromChain: 'Ethereum',
+          toChain: 'Stacks',
+          txHash: depositResult.txHash,
+          status: depositResult.txHash ? 'unknown' : 'failed',
+          errorMessage: depositResult.error,
+        });
         throw new Error(depositResult.error || 'xReserve deposit failed');
       }
 
-      updateStep(1, { 
-        status: 'completed', 
+      updateStep(1, {
+        status: 'completed',
         txHash: depositResult.txHash,
         explorerUrl: `https://etherscan.io/tx/${depositResult.txHash}`,
+      });
+      reportLeg(trackedTxPromise, {
+        legType: 'xreserve_deposit',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        txHash: depositResult.txHash,
+        status: 'confirmed',
       });
 
       currentStepIndexRef.current = 2;
       setBridgeState(prev => ({ ...prev, currentStepIndex: 2 }));
 
       // Step 3: Attestation (includes minting)
-      updateStep(2, { status: 'in-progress' });
+      updateStep(2, {
+        status: 'in-progress',
+        description: "Submitted! No action needed - Circle's attestation typically takes 10-20 minutes.",
+      });
 
       console.log('Waiting for Circle attestation and minting...');
 
@@ -902,6 +1020,13 @@ export function useMultiChainBridge() {
 
       if (!attestationComplete) {
         updateStep(2, { status: 'failed', error: 'Attestation timeout' });
+        reportLeg(trackedTxPromise, {
+          legType: 'stacks_mint',
+          fromChain: 'Ethereum',
+          toChain: 'Stacks',
+          status: 'unknown',
+          errorMessage: 'Attestation did not complete within timeout',
+        });
         throw new Error('Attestation did not complete within timeout');
       }
 
@@ -909,28 +1034,39 @@ export function useMultiChainBridge() {
       await new Promise(resolve => setTimeout(resolve, 5000));
 
       updateStep(2, { status: 'completed' });
-
-      setBridgeState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        isCompleted: true,
-      }));
-
-      return true;
-    } catch (error: any) {
-      console.error('Ethereum to Stacks bridge failed:', error);
-
-      const currentIndex = currentStepIndexRef.current;
-      updateStep(currentIndex, {
-        status: 'failed',
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+      reportLeg(trackedTxPromise, {
+        legType: 'stacks_mint',
+        fromChain: 'Ethereum',
+        toChain: 'Stacks',
+        status: 'confirmed',
       });
 
       setBridgeState(prev => ({
         ...prev,
         isLoading: false,
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+        isCompleted: true,
       }));
+
+      updateTrackedStatus(trackedTxPromise, { status: 'completed' });
+
+      return true;
+    } catch (error: any) {
+      console.error('Ethereum to Stacks bridge failed:', error);
+
+      const message = friendlyErrorMessage(error, 'Bridge failed');
+      const currentIndex = currentStepIndexRef.current;
+      updateStep(currentIndex, {
+        status: 'failed',
+        error: message,
+      });
+
+      setBridgeState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: message,
+      }));
+
+      updateTrackedStatus(trackedTxPromise, { status: 'failed', errorMessage: message });
 
       return false;
     }
@@ -1134,6 +1270,19 @@ export function useMultiChainBridge() {
       isCompleted: false,
     });
 
+    // Fired now (not awaited) so it runs in the background while the actual
+    // bridge proceeds - only awaited later, right before it's first needed,
+    // by which point it has virtually always already resolved. A slow or
+    // down tracking backend must never delay the real bridge.
+    const trackedTxPromise = createTrackedTransaction({
+      ethereumAddress: address,
+      bridgeType: 'evm_to_evm',
+      sourceChain: sourceChainId,
+      destinationChain: destChainId,
+      amount,
+      speed: preferredSpeed,
+    });
+
     try {
       updateStep(0, { status: 'in-progress' });
 
@@ -1170,6 +1319,14 @@ export function useMultiChainBridge() {
         description: cctpQuote.usedFallback
           ? `Standard transfer from ${sourceChain.displayName} to ${destChain.displayName} (Fast unavailable)`
           : `${cctpQuote.speed === 'FAST' ? 'Fast' : 'Standard'} transfer from ${sourceChain.displayName} to ${destChain.displayName}`,
+      });
+      // See the matching comment in bridgeToStacks: the fee is paid
+      // automatically as part of this burn tx, so patch it onto the tracked
+      // transaction now that the live quote is known rather than reporting
+      // a separate leg.
+      updateTrackedStatus(trackedTxPromise, {
+        protocolFeeUsdc: cctpQuote.protocolFeeUsdc,
+        circleFeeUsdc: cctpQuote.estimatedCircleFeeUsdc,
       });
 
       // Execute CCTP bridge and wait for completion
@@ -1260,20 +1417,39 @@ export function useMultiChainBridge() {
         isCompleted: true,
       }));
 
+      reportLeg(trackedTxPromise, {
+        legType: 'cctp_burn_mint',
+        fromChain: sourceChainId,
+        toChain: destChainId,
+        txHash,
+        status: 'confirmed',
+      });
+      updateTrackedStatus(trackedTxPromise, { status: 'completed' });
+
       return true;
     } catch (error: any) {
       console.error('EVM-to-EVM bridge failed:', error);
-      
-      updateStep(0, { 
-        status: 'failed', 
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+
+      const message = friendlyErrorMessage(error, 'Bridge failed');
+      updateStep(0, {
+        status: 'failed',
+        error: message,
       });
 
-      setBridgeState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        error: friendlyErrorMessage(error, 'Bridge failed'),
+      setBridgeState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: message,
       }));
+
+      reportLeg(trackedTxPromise, {
+        legType: 'cctp_burn_mint',
+        fromChain: sourceChainId,
+        toChain: destChainId,
+        status: 'failed',
+        errorMessage: message,
+      });
+      updateTrackedStatus(trackedTxPromise, { status: 'failed', errorMessage: message });
 
       return false;
     }
