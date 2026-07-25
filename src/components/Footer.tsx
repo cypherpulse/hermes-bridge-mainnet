@@ -1,10 +1,21 @@
+import { Link } from "react-router-dom";
+
 export function Footer() {
   return (
     <footer className="w-full mt-12 border-t border-border backdrop-blur-sm bg-background/80 py-8 px-4 flex flex-col sm:flex-row items-center justify-between gap-4 z-50">
-      <div className="flex items-center gap-2 text-base font-medium text-foreground">
-        <span>© {new Date().getFullYear()} Hermes</span>
-        <span className="hidden sm:inline text-muted-foreground">|</span>
-        <span className="text-xs text-muted-foreground">Multichain USDC Bridge</span>
+      <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center sm:text-left">
+        <div className="flex items-center gap-2 text-base font-medium text-foreground">
+          <span>© {new Date().getFullYear()} Hermes</span>
+          <span className="hidden sm:inline text-muted-foreground">|</span>
+          <span className="text-xs text-muted-foreground">Multichain USDC Bridge</span>
+        </div>
+        <nav className="flex items-center gap-3 text-xs text-muted-foreground">
+          <Link to="/faq" className="hover:text-primary transition-colors">FAQ</Link>
+          <span className="text-border">•</span>
+          <Link to="/privacy" className="hover:text-primary transition-colors">Privacy Policy</Link>
+          <span className="text-border">•</span>
+          <Link to="/terms" className="hover:text-primary transition-colors">Terms of Service</Link>
+        </nav>
       </div>
       <a
         href="https://x.com/HermesBridge"
