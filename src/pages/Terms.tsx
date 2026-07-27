@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { LegalLayout } from "@/components/legal/LegalLayout";
+import { SOCIAL_LINKS } from "@/lib/links";
 
 const Terms = () => {
   return (
@@ -102,8 +103,12 @@ const Terms = () => {
 
       <h2>9. Contact</h2>
       <p>
-        Questions about these terms? Reach out on{" "}
-        <a href="https://x.com/HermesBridge" target="_blank" rel="noopener noreferrer">
+        Questions about these terms, or need support? Reach us in our{" "}
+        <a href={SOCIAL_LINKS.telegram} target="_blank" rel="noopener noreferrer">
+          Telegram support group
+        </a>{" "}
+        or on{" "}
+        <a href={SOCIAL_LINKS.x} target="_blank" rel="noopener noreferrer">
           X (@HermesBridge)
         </a>
         .

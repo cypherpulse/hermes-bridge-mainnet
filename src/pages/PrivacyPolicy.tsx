@@ -1,4 +1,5 @@
 import { LegalLayout } from "@/components/legal/LegalLayout";
+import { SOCIAL_LINKS } from "@/lib/links";
 
 const PrivacyPolicy = () => {
   return (
@@ -79,19 +80,18 @@ const PrivacyPolicy = () => {
 
       <h2>Contact</h2>
       <p>
-        Questions about this policy? Reach out on{" "}
-        <a href="https://x.com/HermesBridge" target="_blank" rel="noopener noreferrer">
+        Questions about this policy, or want to make a data request? Reach us in
+        our{" "}
+        <a href={SOCIAL_LINKS.telegram} target="_blank" rel="noopener noreferrer">
+          Telegram support group
+        </a>{" "}
+        or on{" "}
+        <a href={SOCIAL_LINKS.x} target="_blank" rel="noopener noreferrer">
           X (@HermesBridge)
         </a>
         .
       </p>
 
-      <p className="text-xs mt-10 border-t border-border pt-4">
-        This document is provided as a general-purpose template and does not
-        constitute legal advice. It should be reviewed by qualified legal
-        counsel to confirm compliance with the laws applicable to your
-        jurisdiction and user base.
-      </p>
     </LegalLayout>
   );
 };

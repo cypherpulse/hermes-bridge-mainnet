@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { LegalLayout } from "@/components/legal/LegalLayout";
+import { SOCIAL_LINKS } from "@/lib/links";
 
 const Faq = () => {
   return (
@@ -99,8 +100,14 @@ const Faq = () => {
 
       <h2>Contact</h2>
       <p>
-        Questions or an issue with a bridge? Reach out on{" "}
-        <a href="https://x.com/HermesBridge" target="_blank" rel="noopener noreferrer">
+        Stuck on a bridge, or have a question? The fastest way to reach us is our{" "}
+        <a href={SOCIAL_LINKS.telegram} target="_blank" rel="noopener noreferrer">
+          Telegram support group
+        </a>
+        . If you're reporting a stuck transfer, include the transaction hash (you
+        can copy it from <Link to="/my-bridges">Hermes Trail</Link>) so we can look
+        it up directly. You can also find us on{" "}
+        <a href={SOCIAL_LINKS.x} target="_blank" rel="noopener noreferrer">
           X (@HermesBridge)
         </a>
         .
