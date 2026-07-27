@@ -12,6 +12,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
+import { HermesBackground } from '@/components/HermesBackground';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -279,8 +280,9 @@ const HermesTrail = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <HermesBackground />
       <Navbar />
-      <div className="container mx-auto px-4 py-8 max-w-3xl">
+      <div className="relative z-10 container mx-auto px-4 py-8 max-w-3xl">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Hermes Trail</h1>

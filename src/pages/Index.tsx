@@ -7,6 +7,7 @@ import { BridgeForm } from "@/components/bridge/BridgeForm";
 import { BalanceDisplay } from "@/components/bridge/BalanceDisplay";
 import { ExternalLink, ArrowRight, ArrowLeft } from "lucide-react";
 import Navbar from "@/components/Navbar";
+import { HermesBackground } from "@/components/HermesBackground";
 import { Footer } from '@/components/Footer';
 import { cn, formatUsd } from "@/lib/utils";
 import { friendlyErrorMessage } from "@/lib/error-messages";
@@ -229,11 +230,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Background gradient effects */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
-      </div>
+      <HermesBackground />
 
       <div className="relative z-10 flex flex-col flex-1">
         <Navbar />

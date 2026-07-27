@@ -311,10 +311,9 @@ export function BridgeForm({
                 </p>
               ) : (
                 <p className="text-sm text-blue-300">
-                  <strong>No action needed.</strong> Circle's attestation service typically takes
-                  10-20 minutes (occasionally longer) to mint your USDCx on Stacks. You can safely
-                  close this tab - check <span className="font-medium">Hermes Trail</span> anytime
-                  to see the status.
+                  Your USDCx is on its way to{" "}
+                  <span className="font-mono">{stacksAddress.slice(0, 6)}…{stacksAddress.slice(-4)}</span>.
+                  You can safely close this tab.
                 </p>
               )}
             </div>

@@ -27,6 +27,7 @@ import { BridgeProgress } from './BridgeProgress';
 import { useMultiChainBridge, type BridgeStep } from '@/hooks/useMultiChainBridge';
 import { useBridgeFeeQuote } from '@/hooks/useBridgeFeeQuote';
 import { isValidStacksAddress } from '@/lib/stacks-address';
+import { fetchUsdcxBalance } from '@/lib/stacks-usdcx';
 import { type CCTPChainId, CCTP_CHAINS } from '@/lib/multichain-bridge-config';
 import { BRIDGE_CONFIG } from '@/lib/bridge-config';
 import { calculateProtocolFee, type TransferSpeedPreference } from '@/lib/cctp-fees';
@@ -93,6 +94,62 @@ export function MultiChainBridgeForm({
       cancelled = true;
     };
   }, [sourceChain, isConnected, fetchBalance]);
+
+  // Destination-side balance, so the "To" panel shows what's already at the
+  // destination the same way "From" shows the source balance. Reads USDCx via
+  // Hiro when the destination is Stacks, and USDC over RPC for EVM chains.
+  const [destBalance, setDestBalance] = useState('0');
+  const [isFetchingDestBalance, setIsFetchingDestBalance] = useState(false);
+
+  useEffect(() => {
+    if (!destChain) {
+      setDestBalance('0');
+      setIsFetchingDestBalance(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      if (destChain === 'Stacks') {
+        // Show the balance of wherever the funds will actually land: the
+        // typed recipient when it's valid, otherwise the connected wallet.
+        const target =
+          recipientAddress && isValidStacksAddress(recipientAddress)
+            ? recipientAddress
+            : stacksAddress;
+        if (!target) {
+          setDestBalance('0');
+          setIsFetchingDestBalance(false);
+          return;
+        }
+        setIsFetchingDestBalance(true);
+        // fetchUsdcxBalance returns raw micro-units (USDCx has 6 decimals).
+        const raw = await fetchUsdcxBalance(target);
+        if (cancelled) return;
+        setDestBalance((parseInt(raw, 10) / 1_000_000).toString());
+        setIsFetchingDestBalance(false);
+        return;
+      }
+
+      if (!isConnected) {
+        setDestBalance('0');
+        setIsFetchingDestBalance(false);
+        return;
+      }
+      setIsFetchingDestBalance(true);
+      const balance = await fetchBalance(destChain as CCTPChainId);
+      if (cancelled) return;
+      setDestBalance(balance);
+      setIsFetchingDestBalance(false);
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [destChain, isConnected, fetchBalance, recipientAddress, stacksAddress]);
 
   // Set recipient to connected Stacks address if available
   useEffect(() => {
@@ -260,8 +317,22 @@ export function MultiChainBridgeForm({
 
         {/* Destination Chain Selector */}
         <div className="bg-card/90 border border-border/50 rounded-xl p-4 shadow-lg shadow-black/10">
-          <span className="text-sm text-muted-foreground mb-3 block">To</span>
-          
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-muted-foreground">To</span>
+            {destChain && (
+              <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                {isFetchingDestBalance ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Loading balance...
+                  </>
+                ) : (
+                  <>Balance: {formatUsd(destBalance)} {isToStacks ? 'USDCx' : 'USDC'}</>
+                )}
+              </span>
+            )}
+          </div>
+
           <ChainSelectorWithStacks
             value={destChain}
             onChange={(chainId) => {

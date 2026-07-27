@@ -120,3 +120,126 @@
     background-clip: text;
   }
 }
+
+/* ============================================================
+   Hermes ambient background
+   ------------------------------------------------------------
+   Layered, GPU-friendly atmosphere for a financial dapp: slow drifting
+   aurora orbs over a faint network grid. Deliberately has no streaking
+   or travelling elements - moving lines drag the eye away from balances
+   and addresses, which is exactly wrong for a bridge UI.
+
+   Constraints this is built around:
+   - Only `transform`/`opacity` animate, so it stays off the main
+     thread and never triggers layout.
+   - Everything is very low opacity: this must sit *behind* balances
+     and addresses without competing with them.
+   - Fully disabled under prefers-reduced-motion.
+   ============================================================ */
+.hermes-bg {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Warm radial wash: lifts the centre so content has something to sit on. */
+.hermes-bg__wash {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 50% at 50% 0%, hsl(32 100% 50% / 0.10) 0%, transparent 70%),
+    radial-gradient(50% 40% at 50% 100%, hsl(43 100% 50% / 0.06) 0%, transparent 70%);
+}
+
+/* Network grid, faded out at the edges so it never looks like a table. */
+.hermes-bg__grid {
+  position: absolute;
+  inset: -1px;
+  background-image:
+    linear-gradient(to right, hsl(32 60% 50% / 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(32 60% 50% / 0.07) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 75%);
+  animation: hermes-grid-breathe 14s ease-in-out infinite;
+}
+
+/* Drifting aurora orbs. */
+.hermes-bg__orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  will-change: transform;
+}
+
+.hermes-bg__orb--1 {
+  top: -12%;
+  left: 8%;
+  width: 42vw;
+  height: 42vw;
+  max-width: 620px;
+  max-height: 620px;
+  background: radial-gradient(circle, hsl(32 100% 50% / 0.20) 0%, transparent 68%);
+  animation: hermes-drift-a 26s ease-in-out infinite;
+}
+
+.hermes-bg__orb--2 {
+  bottom: -16%;
+  right: 4%;
+  width: 38vw;
+  height: 38vw;
+  max-width: 560px;
+  max-height: 560px;
+  background: radial-gradient(circle, hsl(43 100% 50% / 0.15) 0%, transparent 68%);
+  animation: hermes-drift-b 32s ease-in-out infinite;
+}
+
+.hermes-bg__orb--3 {
+  top: 38%;
+  left: 52%;
+  width: 30vw;
+  height: 30vw;
+  max-width: 440px;
+  max-height: 440px;
+  background: radial-gradient(circle, hsl(25 90% 45% / 0.12) 0%, transparent 70%);
+  animation: hermes-drift-c 38s ease-in-out infinite;
+}
+
+/* Vignette: pulls focus to the centre column where the forms live. */
+.hermes-bg__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 75% 65% at 50% 45%, transparent 40%, hsl(20 14% 4% / 0.75) 100%);
+}
+
+@keyframes hermes-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(7%, 5%, 0) scale(1.10); }
+  66%      { transform: translate3d(-5%, 9%, 0) scale(0.94); }
+}
+
+@keyframes hermes-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  40%      { transform: translate3d(-9%, -6%, 0) scale(1.12); }
+  75%      { transform: translate3d(5%, -3%, 0) scale(0.95); }
+}
+
+@keyframes hermes-drift-c {
+  0%, 100% { transform: translate3d(-50%, 0, 0) scale(1); }
+  50%      { transform: translate3d(-42%, -8%, 0) scale(1.15); }
+}
+
+@keyframes hermes-grid-breathe {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* Respect users who ask for less motion: keep the depth, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .hermes-bg__orb,
+  .hermes-bg__grid {
+    animation: none;
+  }
+}

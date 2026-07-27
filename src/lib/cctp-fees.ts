@@ -61,6 +61,47 @@ export async function fetchCircleFeeTiers(
 // too low the depositForBurn transaction reverts on-chain.
 const MAX_FEE_BUFFER_PCT = 0.15;
 
+/**
+ * Hard ceiling on the estimated Fast fee below. 25 bps = 0.25%, well above
+ * the 0-13 bps Circle charges on real CCTP routes - so even a mistyped env
+ * value can never authorize a painful maxFee.
+ */
+const MAX_FALLBACK_FAST_FEE_BPS = 25;
+
+/**
+ * Estimated Fast-tier fee (bps) for the Ethereum -> Stacks (xReserve) leg,
+ * which Circle's fee API cannot quote.
+ *
+ * Findings from live testing:
+ *
+ *  1. `GET /v2/burn/USDC/fees/0/10003` -> HTTP 400 "Invalid source/destination
+ *     domain id". Circle's fee endpoint doesn't cover xReserve's non-EVM
+ *     remote domains. (EVM control route 0->6 returns 200 with both tiers.)
+ *  2. Mainnet settlement takes ~13-19 min regardless of speed selection. That
+ *     floor is Ethereum hard finality (2 epochs), which Standard Transfer must
+ *     wait for - not something the client can tune away.
+ *
+ * Defaults to 0 (fails closed) on least-authorization grounds: `maxFee` is the
+ * user signing "deduct up to this much", and the capability it pays for
+ * demonstrably doesn't exist on this route yet - so a nonzero value could only
+ * ever be drawn against, never benefit them. A missing/blank env must not
+ * silently authorize a fee either, hence 0 rather than a nonzero default.
+ *
+ * The plumbing stays wired so this is a one-line env flip (no code change, no
+ * redeploy risk) the day Circle enables Fast Transfer for xReserve remote
+ * domains. Re-verify the real fee for the route at that point rather than
+ * trusting a value guessed here - 1 bps is what the closest quotable route
+ * (Ethereum->Base) charges, but that is not authoritative for Stacks.
+ */
+export const XRESERVE_FAST_FEE_BPS = (() => {
+  const raw = import.meta.env.VITE_XRESERVE_FAST_FEE_BPS as string | undefined;
+  const parsed = Number(raw);
+  if (raw !== undefined && raw !== '' && Number.isFinite(parsed) && parsed >= 0) {
+    return Math.min(parsed, MAX_FALLBACK_FAST_FEE_BPS);
+  }
+  return 0;
+})();
+
 function bpsToUsdc(amountUsdc: string, bps: number, bufferPct = 0): string {
   const amount = parseFloat(amountUsdc);
   if (!Number.isFinite(amount) || amount <= 0 || bps <= 0) return '0';
@@ -119,6 +160,17 @@ export async function calculateBridgeFee(params: {
   isMainnet?: boolean;
   /** Set false for legs (e.g. xReserve) that don't yet support fee-recipient splitting. */
   includeProtocolFee?: boolean;
+  /**
+   * Estimated Fast-tier fee (bps) to use when Circle's fee API can't quote
+   * this route. Opt-in and currently 0 (disabled) for the only route that
+   * needs it - see XRESERVE_FAST_FEE_BPS above for the full rationale and
+   * mainnet test results. When 0/undefined this behaves exactly as before:
+   * an unquotable route falls back to Standard.
+   *
+   * Note `maxFee` is a CEILING the user accepts, not a charge - the actual
+   * deduction is whatever Circle charges, up to this cap.
+   */
+  fallbackFastFeeBps?: number;
 }): Promise<BridgeFeeQuote> {
   const {
     amountUsdc,
@@ -127,6 +179,7 @@ export async function calculateBridgeFee(params: {
     preferredSpeed = 'FAST',
     isMainnet = true,
     includeProtocolFee = true,
+    fallbackFastFeeBps,
   } = params;
 
   const protocolFeeUsdc = includeProtocolFee ? calculateProtocolFee(amountUsdc).feeUsdc : '0';
@@ -171,6 +224,19 @@ export async function calculateBridgeFee(params: {
     }
     return buildQuote('FAST', fastTier.minimumFee, false);
   } catch (error) {
+    // Circle couldn't quote this route. If the caller supplied an estimated
+    // Fast-tier fee (routes Circle's API doesn't cover at all - notably
+    // xReserve's Stacks domain), still attempt Fast using that estimate
+    // rather than silently degrading to a 10-20 minute Standard transfer.
+    // Clamped so a misconfigured env can never authorize a large maxFee.
+    if (fallbackFastFeeBps && fallbackFastFeeBps > 0) {
+      const safeBps = Math.min(fallbackFastFeeBps, MAX_FALLBACK_FAST_FEE_BPS);
+      console.warn(
+        `[cctp-fees] Circle cannot quote ${sourceDomain}->${destDomain}; attempting Fast with an estimated ${safeBps} bps (maxFee is a ceiling, not a charge):`,
+        error
+      );
+      return buildQuote('FAST', safeBps, true);
+    }
     console.warn('[cctp-fees] Fast transfer quote failed, falling back to Standard:', error);
     return buildQuote('STANDARD', 0, true);
   }

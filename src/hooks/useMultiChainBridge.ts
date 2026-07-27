@@ -23,7 +23,7 @@ import {
 } from '@/lib/multichain-bridge-config';
 import { BRIDGE_CONFIG, ERC20_ABI, X_RESERVE_ABI } from '@/lib/bridge-config';
 import { encodeStacksAddress, isValidStacksAddress } from '@/lib/stacks-address';
-import { calculateBridgeFee, type BridgeFeeQuote, type TransferSpeedPreference } from '@/lib/cctp-fees';
+import { calculateBridgeFee, XRESERVE_FAST_FEE_BPS, type BridgeFeeQuote, type TransferSpeedPreference } from '@/lib/cctp-fees';
 import { pollForUsdcxMint, type UsdcxMintTx } from '@/lib/stacks-usdcx';
 import { friendlyErrorMessage } from '@/lib/error-messages';
 import { createTrackedTransaction, reportLeg, updateTrackedStatus } from '@/lib/tracking-client';
@@ -53,9 +53,9 @@ function describeMintProgress(elapsedMs: number, mintTx: UsdcxMintTx | null): st
   const elapsed = formatMinutesSeconds(elapsedMs);
   if (!mintTx) {
     if (elapsedMs < 30_000) {
-      return `Submitted! Waiting for Circle's attestation service to detect your deposit...`;
+      return `Submitted! Your USDCx is on its way to your Stacks address.`;
     }
-    return `No action needed from you - Circle's attestation typically takes 10-20 minutes (occasionally longer). Your USDCx will be minted automatically to your Stacks address once it completes. (${elapsed} elapsed)`;
+    return `Your USDCx will be minted to your Stacks address automatically - no action needed. (${elapsed} elapsed)`;
   }
   if (elapsedMs > 3 * 60 * 1000) {
     return `Your USDCx has arrived and is finalizing on-chain - this can occasionally take a few extra minutes (${elapsed} elapsed).`;
@@ -354,9 +354,7 @@ export function useMultiChainBridge() {
   const getSupportedChains = useCallback(() => {
     try {
       const kit = new BridgeKit({ disableErrorReporting: true });
-      const chains = kit.getSupportedChains();
-      console.log('Bridge Kit supported chains:', chains.map(c => c.chain));
-      return chains;
+      return kit.getSupportedChains();
     } catch (error) {
       console.error('Error getting supported chains:', error);
       return [];
@@ -1103,6 +1101,10 @@ export function useMultiChainBridge() {
         destDomain: BRIDGE_CONFIG.STACKS_DOMAIN,
         preferredSpeed,
         includeProtocolFee: false,
+        // Circle's fee API returns HTTP 400 for the Stacks domain, so without
+        // an estimate this leg always fell back to Standard (maxFee 0) - the
+        // real reason Stacks-bound bridges took 10-20 min even on Fast.
+        fallbackFastFeeBps: XRESERVE_FAST_FEE_BPS,
       });
       const maxFee = parseUnits(feeQuote.circleMaxFeeUsdc, 6);
       const remoteRecipient = encodeStacksAddress(stacksRecipient);

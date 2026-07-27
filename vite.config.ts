@@ -21,6 +21,15 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // Strip every console.* call and debugger statement from production
+  // bundles at the esbuild level. This is belt-and-braces alongside the
+  // removeConsole() plugin above: it's built into the minifier, covers
+  // console.warn/error (not just .log), and can't be defeated by plugin
+  // ordering. Deliberately scoped to production so `pnpm dev` keeps full
+  // logging for debugging.
+  esbuild: {
+    drop: mode === 'production' ? ['console', 'debugger'] : [],
+  },
   build: {
     target: 'esnext',
     minify: 'esbuild',

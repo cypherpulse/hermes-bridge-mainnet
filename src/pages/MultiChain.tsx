@@ -15,6 +15,7 @@ import { useStacksWallet } from '@/hooks/useStacksWallet';
 import { CCTP_CHAINS } from '@/lib/multichain-bridge-config';
 import { cn } from '@/lib/utils';
 import Navbar from '@/components/Navbar';
+import { HermesBackground } from '@/components/HermesBackground';
 import { Footer } from '@/components/Footer';
 
 export default function MultiChain() {
@@ -24,12 +25,7 @@ export default function MultiChain() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Background gradient effects */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 right-1/3 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl" />
-      </div>
+      <HermesBackground />
 
       <div className="relative z-10">
         <Navbar />

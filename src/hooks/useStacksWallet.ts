@@ -269,24 +269,40 @@ export function useStacksWallet() {
         Cl.none(),
       ];
 
-      // Now that signing is verified to use `senderAddress` as tx-sender
-      // (confirmed on-chain), a fungible post-condition is safe to add back:
-      // it makes Stacks itself guarantee the tx moves EXACTLY this much USDCx
-      // from the sender and nothing more. Combined with the default 'deny'
+      // A fungible post-condition makes Stacks itself guarantee this tx moves
+      // EXACTLY this much USDCx from the sender and nothing more. With 'deny'
       // mode, any unexpected asset movement aborts the transaction on-chain.
-      // (This was previously removed only because a stale `sender` made the
-      // post-condition name the wrong principal and abort every transfer;
-      // that mismatch is fixed.)
-      const postCondition = Pc.principal(senderAddress)
-        .willSendEq(microAmount)
-        .ft(`${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`, USDCX_CONTRACT.assetName);
+      //
+      // SELF-TRANSFER CAVEAT (learned the hard way on mainnet): Stacks
+      // post-conditions evaluate the NET asset movement for a principal. When
+      // sender === recipient the address sends X and receives X, so its net
+      // movement is 0, and `willSendEq(X)` aborts with:
+      //   "...owned by SP...: 10000 SentEq 0"
+      // even though the contract call itself succeeded. So for a self-transfer
+      // we skip the post-condition (there is no net outflow to constrain) and
+      // fall back to 'allow' - 'deny' with an empty list would block every
+      // asset movement and abort just the same. Real transfers to a different
+      // address keep full post-condition protection.
+      const isSelfTransfer = recipient === senderAddress;
+
+      // Pass the amount as a decimal STRING, not the BigInt. The post-condition
+      // is serialized to JSON to reach the wallet extension, and JSON.stringify
+      // throws on BigInt ("Do not know how to serialize a BigInt"), which the
+      // wallet surfaces as an opaque `JsonRpcError: Internal error`.
+      const postConditions = isSelfTransfer
+        ? []
+        : [
+            Pc.principal(senderAddress)
+              .willSendEq(microAmount.toString())
+              .ft(`${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`, USDCX_CONTRACT.assetName),
+          ];
 
       const response = await request('stx_callContract', {
         contract: `${USDCX_CONTRACT.address}.${USDCX_CONTRACT.name}`,
         functionName: 'transfer',
         functionArgs,
-        postConditions: [postCondition],
-        postConditionMode: 'deny',
+        postConditions,
+        postConditionMode: isSelfTransfer ? 'allow' : 'deny',
         network: 'mainnet',
         address: senderAddress,
       });

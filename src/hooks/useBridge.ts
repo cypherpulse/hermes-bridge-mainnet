@@ -4,7 +4,7 @@ import { parseUnits, formatUnits, type Address, type Hex, type PublicClient } fr
 import { mainnet } from 'viem/chains';
 import { BRIDGE_CONFIG, ERC20_ABI, X_RESERVE_ABI } from '@/lib/bridge-config';
 import { encodeStacksAddress } from '@/lib/stacks-address';
-import { calculateBridgeFee, calculateProtocolFee, type TransferSpeedPreference, type BridgeFeeQuote } from '@/lib/cctp-fees';
+import { calculateBridgeFee, calculateProtocolFee, XRESERVE_FAST_FEE_BPS, type TransferSpeedPreference, type BridgeFeeQuote } from '@/lib/cctp-fees';
 
 /**
  * Wait for a tx receipt, but if the RPC's own timeout fires, keep polling the
@@ -172,6 +172,11 @@ export function useBridge() {
       destDomain: BRIDGE_CONFIG.STACKS_DOMAIN,
       preferredSpeed,
       includeProtocolFee: false,
+      // Circle's fee API can't quote the Stacks domain (HTTP 400), so without
+      // this every Ethereum->Stacks bridge silently degraded to Standard
+      // (maxFee 0) and took 10-20 min even with Fast selected. xReserve has no
+      // finality-threshold param, so a nonzero maxFee is the only Fast signal.
+      fallbackFastFeeBps: XRESERVE_FAST_FEE_BPS,
     });
     const maxFee = parseUnits(feeQuote.circleMaxFeeUsdc, 6);
     const remoteRecipient = encodeStacksAddress(stacksRecipient);
