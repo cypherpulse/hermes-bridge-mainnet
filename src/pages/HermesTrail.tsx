@@ -177,8 +177,11 @@ const HermesTrail = () => {
   const reconcilePendingArrivals = useCallback(async (txs: TrackedTransaction[]) => {
     const isPending = (t: TrackedTransaction) => t.status === 'pending' || t.status === 'in_progress';
 
-    // Branch 2: evm_to_evm with an already-confirmed cctp_burn_mint leg -
-    // no lookup needed.
+    // Branch 2: evm_to_evm with an already-CONFIRMED cctp_burn_mint leg.
+    // This is evidence, not a guess: bridgeEvmToEvm only reports that leg as
+    // 'confirmed' on its success path (the catch reports 'failed'), so a
+    // cancelled or rejected bridge can never carry one. All we're repairing
+    // here is a lost follow-up status PATCH, never inventing an outcome.
     const evmHealed = txs.filter(
       (t) =>
         isPending(t) &&
