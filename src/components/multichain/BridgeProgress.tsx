@@ -1,4 +1,4 @@
-import { Loader2, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, ExternalLink, Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -25,11 +25,21 @@ export function BridgeProgress({
   // treatment instead of the generic in-progress spinner.
   const attestationStep = steps.find((s) => s.id === 'xreserve-attestation');
   const isSubmittedAndWaiting = attestationStep?.status === 'in-progress';
+  const completedCount = steps.filter((s) => s.status === 'completed').length;
 
   return (
     <div className="bg-card/70 backdrop-blur-xl border border-border/50 rounded-xl p-4 space-y-4 shadow-lg shadow-black/10 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Bridge Progress</h3>
+        <div>
+          <h3 className="font-semibold">Bridge Progress</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {isActuallyCompleted
+              ? 'All steps complete'
+              : hasFailedSteps
+                ? 'Needs attention'
+                : `Step ${Math.min(completedCount + 1, steps.length)} of ${steps.length}`}
+          </p>
+        </div>
         {(isActuallyCompleted || hasFailedSteps) && (
           <Button variant="outline" size="sm" onClick={onReset} className="animate-in fade-in duration-300">
             New Bridge
@@ -37,9 +47,25 @@ export function BridgeProgress({
         )}
       </div>
 
+      {/* Overall progress bar - gives a sense of "how far through am I"
+          that a list of step rows alone doesn't convey at a glance. */}
+      <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+        <div
+          className={cn(
+            'h-full rounded-full transition-all duration-700 ease-out',
+            hasFailedSteps ? 'bg-destructive' : 'gradient-bitcoin'
+          )}
+          style={{ width: `${(completedCount / steps.length) * 100}%` }}
+        />
+      </div>
+
       <div className="space-y-3">
         {steps.map((step, index) => {
           const isCalmWaiting = step.id === 'xreserve-attestation' && step.status === 'in-progress';
+          // Every in-progress step except attestation is waiting on a wallet
+          // signature. Calling that out explicitly is the difference between
+          // "why is this hanging?" and "oh, my wallet is waiting for me".
+          const needsSignature = step.status === 'in-progress' && !isCalmWaiting;
           return (
           <div
             key={step.id}
@@ -47,7 +73,7 @@ export function BridgeProgress({
             className={cn(
               "flex items-start gap-3 p-3 rounded-lg transition-colors duration-300",
               "animate-in fade-in slide-in-from-left-2",
-              step.status === 'in-progress' && !isCalmWaiting && "bg-primary/10",
+              needsSignature && "bg-primary/10 ring-1 ring-primary/40",
               isCalmWaiting && "bg-blue-500/10",
               step.status === 'completed' && "bg-green-500/10",
               step.status === 'failed' && "bg-destructive/10",
@@ -76,6 +102,13 @@ export function BridgeProgress({
             <div className="flex-1 min-w-0">
               <p className="font-medium text-foreground">{step.name}</p>
               <p className="text-sm text-muted-foreground">{step.description}</p>
+
+              {needsSignature && (
+                <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                  <Wallet className="w-3 h-3" />
+                  Confirm in your wallet
+                </p>
+              )}
 
               {step.error && (
                 <p className="text-sm text-destructive mt-1">{step.error}</p>
