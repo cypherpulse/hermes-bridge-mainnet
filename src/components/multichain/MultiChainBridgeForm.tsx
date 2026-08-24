@@ -236,8 +236,30 @@ export function MultiChainBridgeForm({
     setDestChain(newDest);
   };
 
+  // The bridge card keeps the same narrow width as every other card on the
+  // page - widening it would break the page's visual rhythm. Only when a
+  // bridge actually starts does the container grow into two columns, and the
+  // progress arrives as its own separate card beside the form rather than
+  // being crammed inside it. Below `lg` it stacks, progress first, since on
+  // a phone the running bridge matters more than the form already filled in.
+  const hasProgress = bridgeState.steps.length > 0;
+
   return (
-    <div className="space-y-6">
+    <div
+      className={cn(
+        'mx-auto w-full',
+        hasProgress
+          ? 'max-w-5xl grid gap-6 items-start lg:grid-cols-2'
+          : 'max-w-lg'
+      )}
+    >
+      {/* Bridge form card */}
+      <div
+        className={cn(
+          'bg-card/50 border border-border rounded-2xl p-6 backdrop-blur-sm space-y-6 min-w-0',
+          hasProgress && 'order-2 lg:order-1'
+        )}
+      >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Source Chain Selector */}
         <div className="bg-card/90 border border-border/50 rounded-xl p-4 shadow-lg shadow-black/10">
@@ -524,13 +546,19 @@ export function MultiChainBridgeForm({
         </div>
       )}
 
-      {/* Bridge Progress */}
-      {bridgeState.steps.length > 0 && (
-        <BridgeProgress 
-          steps={bridgeState.steps} 
-          isCompleted={bridgeState.isCompleted}
-          onReset={resetBridgeState}
-        />
+      </div>
+
+      {/* Progress - a card in its own right, sitting beside the form rather
+          than inside it. Sticky so it stays in view while the user scrolls
+          during a multi-minute bridge. */}
+      {hasProgress && (
+        <div className="order-1 lg:order-2 min-w-0 lg:sticky lg:top-24">
+          <BridgeProgress
+            steps={bridgeState.steps}
+            isCompleted={bridgeState.isCompleted}
+            onReset={resetBridgeState}
+          />
+        </div>
       )}
     </div>
   );
