@@ -198,10 +198,40 @@ export interface MultichainBridgeState {
 }
 
 export function useMultiChainBridge() {
-  const { address, isConnected, chainId: connectedChainId } = useAccount();
+  const { address, isConnected, chainId: connectedChainId, connector } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const { switchChainAsync } = useSwitchChain();
+
+  /**
+   * Resolve the EIP-1193 provider of the wallet the user ACTUALLY connected
+   * with, via wagmi's connector.
+   *
+   * This must never reach straight for `window.ethereum`. The app connects
+   * through Reown AppKit/wagmi, so the live provider is frequently NOT the
+   * injected one:
+   *  - WalletConnect (any mobile wallet, incl. from a desktop QR scan) has no
+   *    `window.ethereum` at all - signing silently targeted the wrong object.
+   *  - Inside a wallet's in-app browser, `window.ethereum` may be absent
+   *    (Leather and Xverse are Stacks/Bitcoin wallets and inject no Ethereum
+   *    provider) or may be a *different* wallet than the connected one.
+   * That mismatch is why connecting succeeded while signing and network
+   * switching then failed and halted the bridge.
+   *
+   * Falls back to the injected provider only when no connector is available.
+   */
+  const getWalletProvider = useCallback(async (): Promise<any | null> => {
+    try {
+      const provider = await connector?.getProvider?.();
+      if (provider) return provider;
+    } catch (error) {
+      console.warn('Could not get provider from connector, falling back to injected:', error);
+    }
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      return (window as any).ethereum;
+    }
+    return null;
+  }, [connector]);
 
   // Balances state
   const [sourceBalance, setSourceBalance] = useState<string>('0');
@@ -295,15 +325,26 @@ export function useMultiChainBridge() {
   // Wait for wallet permissions to be resolved
   const waitForWalletReady = useCallback(async (maxWaitMs = 5000): Promise<boolean> => {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < maxWaitMs) {
       try {
-        // Try to get accounts to check if wallet is ready
-        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        const provider = await getWalletProvider();
+        if (!provider) {
+          // No EVM provider at all - e.g. running inside a Stacks-only
+          // wallet browser. Retrying can't conjure one, so fail fast with a
+          // message the caller can surface.
+          throw new Error(
+            'No Ethereum wallet is available in this browser. If you are inside a wallet app, open Hermes in your device browser or connect an Ethereum wallet via WalletConnect.'
+          );
+        }
+        const accounts = await provider.request({ method: 'eth_accounts' });
         if (accounts && accounts.length > 0) {
           return true;
         }
       } catch (error) {
+        if (error?.message?.includes('No Ethereum wallet is available')) {
+          throw error;
+        }
         // If we get an error about pending requests, wait and retry
         if (error.message && error.message.includes('already pending')) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -315,9 +356,9 @@ export function useMultiChainBridge() {
       
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-    
+
     return false;
-  }, []);
+  }, [getWalletProvider]);
 
   // Initialize Bridge Kit with retry logic
   const initializeBridgeKitAdapter = useCallback(async (maxRetries = 3): Promise<any> => {
@@ -331,10 +372,14 @@ export function useMultiChainBridge() {
           throw new Error('Wallet not ready after waiting');
         }
 
+        const provider = await getWalletProvider();
+        if (!provider) {
+          throw new Error('No Ethereum wallet provider available to sign with.');
+        }
         const adapter = await createViemAdapterFromProvider({
-          provider: window.ethereum as any,
+          provider: provider as any,
         });
-        
+
         console.log('Bridge Kit adapter initialized successfully');
         return adapter;
       } catch (error) {
@@ -374,15 +419,21 @@ export function useMultiChainBridge() {
   // Helper to get current chain ID directly from provider (not stale React state)
   const getCurrentChainId = useCallback(async (): Promise<number | null> => {
     try {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const chainIdHex = await (window as any).ethereum.request({ method: 'eth_chainId' });
+      // Ask the CONNECTED wallet, not the injected one. Reading eth_chainId
+      // off window.ethereum while signing through WalletConnect reported a
+      // different wallet's chain, so a successful switch still looked like a
+      // failure and the bridge aborted.
+      const provider = await getWalletProvider();
+      if (provider) {
+        const chainIdHex = await provider.request({ method: 'eth_chainId' });
         return parseInt(chainIdHex, 16);
       }
       return connectedChainId || null;
     } catch {
+      // wagmi's own view of the chain is the best fallback available.
       return connectedChainId || null;
     }
-  }, [connectedChainId]);
+  }, [connectedChainId, getWalletProvider]);
 
   // Switch to the required chain with proper verification
   const ensureCorrectChain = useCallback(async (targetChainId: number, maxRetries = 3): Promise<boolean> => {
@@ -424,6 +475,21 @@ export function useMultiChainBridge() {
         }
 
         if (attempt === maxRetries) {
+          // Plenty of mobile and in-app wallets simply don't implement
+          // wallet_switchEthereumChain. Rather than give up immediately,
+          // give the user a window to switch by hand in their wallet and
+          // keep polling - a manual switch is just as good as a programmatic
+          // one, and this is the difference between "bridge halted" and a
+          // small detour.
+          console.warn('Programmatic chain switch unsupported/failed - waiting for a manual switch');
+          const manualDeadline = Date.now() + 60_000;
+          while (Date.now() < manualDeadline) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if ((await getCurrentChainId()) === targetChainId) {
+              console.log('Detected manual network switch');
+              return true;
+            }
+          }
           return false;
         }
 
@@ -531,7 +597,7 @@ export function useMultiChainBridge() {
       // Ensure we're on the source chain
       const onCorrectChain = await ensureCorrectChain(sourceChain.chainId);
       if (!onCorrectChain) {
-        throw new Error(`Please switch to ${sourceChain.displayName} network`);
+        throw new Error(`Could not switch to ${sourceChain.displayName}. Open your wallet, switch to ${sourceChain.displayName} manually, then start the bridge again.`);
       }
 
       // Get fresh wallet client after chain switch
@@ -685,7 +751,7 @@ export function useMultiChainBridge() {
         const onEthereum = await ensureCorrectChain(mainnet.id);
         if (!onEthereum) {
           updateStep(1, { status: 'failed', error: 'Failed to switch to Ethereum network' });
-          throw new Error('Please switch to Ethereum network manually');
+          throw new Error('Could not switch to Ethereum. Open your wallet, switch to Ethereum manually, then start the bridge again.');
         }
       }
 
@@ -913,7 +979,7 @@ export function useMultiChainBridge() {
       // Ensure we're on Ethereum
       const onEthereum = await ensureCorrectChain(mainnet.id);
       if (!onEthereum) {
-        throw new Error('Please switch to Ethereum network');
+        throw new Error('Could not switch to Ethereum. Open your wallet, switch to Ethereum manually, then start the bridge again.');
       }
 
       const value = parseUnits(amount, 6);
@@ -1291,13 +1357,17 @@ export function useMultiChainBridge() {
       // Ensure we're on the source chain
       const onCorrectChain = await ensureCorrectChain(sourceChain.chainId);
       if (!onCorrectChain) {
-        throw new Error(`Please switch to ${sourceChain.displayName} network`);
+        throw new Error(`Could not switch to ${sourceChain.displayName}. Open your wallet, switch to ${sourceChain.displayName} manually, then start the bridge again.`);
       }
 
       // Initialize Bridge Kit
       const kit = new BridgeKit({ disableErrorReporting: true });
+      const evmProvider = await getWalletProvider();
+      if (!evmProvider) {
+        throw new Error('No Ethereum wallet provider available to sign with.');
+      }
       const adapter = await createViemAdapterFromProvider({
-        provider: window.ethereum as any,
+        provider: evmProvider as any,
       });
 
       console.log('=== CCTP EVM-to-EVM Bridge ===');
