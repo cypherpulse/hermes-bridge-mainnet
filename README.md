@@ -1,11 +1,21 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Hermes Logo" width="100%" height="100%" />
+  <img src="https://www.hermesbridge.xyz/logo.png" alt="Hermes Logo" width="180" />
 </p>
 
 <h1 align="center">Hermes Bridge</h1>
 
 <p align="center">
   <strong>Bridge USDC across Ethereum, Solana, and Stacks — Multichain Stablecoin Transfers</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/status-LIVE%20ON%20MAINNET-brightgreen?style=for-the-badge" alt="Live on Mainnet" />
+</p>
+
+<p align="center">
+  <a href="https://app.hermesbridge.xyz/"><strong>Launch App (Mainnet)</strong></a> •
+  <a href="https://testnet.hermesbridge.xyz/">Testnet</a> •
+  <a href="https://hermesbridge.xyz/">Website</a>
 </p>
 
 
@@ -29,7 +39,7 @@
 </p>
 
 <p align="center">
-  Hermes Bridge is a secure, production-ready multichain bridge enabling seamless USDC transfers between Ethereum, Solana, and Stacks blockchains. It provides:
+  Hermes Bridge is a secure, production-ready multichain bridge enabling seamless USDC transfers between Ethereum, Solana, and Stacks blockchains. <b>Hermes is live on mainnet</b> at <a href="https://app.hermesbridge.xyz/">app.hermesbridge.xyz</a>, with a testnet environment at <a href="https://testnet.hermesbridge.xyz/">testnet.hermesbridge.xyz</a> for trying it without real funds. It provides:
   <ul>
     <li><b>Multichain Bridge:</b> Bridge USDC between Ethereum, Solana, and Stacks using Circle's trusted xReserve protocol and CCTP (Cross-Chain Transfer Protocol).</li>
     <li><b>Stacks Transfers:</b> Transfer USDCx between Stacks addresses with full custody and control.</li>
@@ -68,8 +78,9 @@
   - [When to Transfer (USDCx → USDCx)](#when-to-transfer-usdcx--usdcx)
 - [Use Cases](#use-cases)
   - [Use Case 1: Ethereum User Entering Stacks](#use-case-1-ethereum-user-entering-stacks)
-  - [Use Case 2: Stacks Native User Trading](#use-case-2-stacks-native-user-trading)
-  - [Use Case 3: Cross-Chain Arbitrage](#use-case-3-cross-chain-arbitrage)
+  - [Use Case 2: Solana User Entering Stacks](#use-case-2-solana-user-entering-stacks)
+  - [Use Case 3: Stacks Native User Trading](#use-case-3-stacks-native-user-trading)
+  - [Use Case 4: Cross-Chain Arbitrage](#use-case-4-cross-chain-arbitrage)
 - [Preview](#preview)
   - [Bridge Interface](#bridge-interface)
   - [Transfer Interface](#transfer-interface)
@@ -95,8 +106,10 @@
   - [Development](#development)
   - [Production Build](#production-build)
 - [Smart Contracts](#smart-contracts)
-  - [Ethereum Contracts (Sepolia Testnet)](#ethereum-contracts-sepolia-testnet)
-  - [Stacks Contracts (Testnet)](#stacks-contracts-testnet)
+  - [Ethereum Contracts (Mainnet)](#ethereum-contracts-mainnet)
+  - [Stacks Contracts (Mainnet)](#stacks-contracts-mainnet)
+  - [Solana Contracts (Mainnet)](#solana-contracts-mainnet)
+  - [Testnet Contracts](#testnet-contracts)
   - [Contract Interactions](#contract-interactions)
     - [1. Approve USDC (Ethereum)](#1-approve-usdc-ethereum)
     - [2. Deposit to Remote / Bridge (Ethereum)](#2-deposit-to-remote--bridge-ethereum)
@@ -109,7 +122,8 @@
 - [Project Structure](#project-structure)
 - [Testing](#testing)
   - [Manual Testing Checklist](#manual-testing-checklist)
-    - [Bridge Flow](#bridge-flow)
+    - [Bridge Flow (Ethereum)](#bridge-flow-ethereum)
+    - [Bridge Flow (Solana)](#bridge-flow-solana)
     - [Transfer Flow](#transfer-flow)
 - [Deployment](#deployment)
   - [Vercel (Recommended)](#vercel-recommended)
@@ -641,19 +655,39 @@ pnpm lint
 
 ## Smart Contracts
 
-### Ethereum Contracts (Sepolia Testnet)
+These are the contracts the **live mainnet app** at
+[app.hermesbridge.xyz](https://app.hermesbridge.xyz/) uses. Testnet addresses for
+[testnet.hermesbridge.xyz](https://testnet.hermesbridge.xyz/) are listed further below.
+
+### Ethereum Contracts (Mainnet)
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| **USDC Token** | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | [View on Etherscan](https://sepolia.etherscan.io/token/0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238) |
-| **xReserve** | `0x008888878f94C0d87defdf0B07f46B93C1934442` | [View on Etherscan](https://sepolia.etherscan.io/address/0x008888878f94C0d87defdf0B07f46B93C1934442) |
+| **USDC Token** | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | [View on Etherscan](https://etherscan.io/token/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48) |
+| **xReserve** | `0x8888888199b2Df864bf678259607d6D5EBb4e3Ce` | [View on Etherscan](https://etherscan.io/address/0x8888888199b2Df864bf678259607d6D5EBb4e3Ce) |
 
-### Solana Contracts (Devnet)
+### Stacks Contracts (Mainnet)
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| **USDC Token** | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | [View on Solscan](https://solscan.io/token/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v?cluster=devnet) |
-| **CCTP Message Transmitter** | `CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd` | [View on Solscan](https://solscan.io/account/CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd?cluster=devnet) |
+| **USDCx Token** | `SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx` | [View on Hiro](https://explorer.hiro.so/txid/SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx) |
+| **USDCx v1** (mint / burn) | `SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx-v1` | [View on Hiro](https://explorer.hiro.so/txid/SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx-v1) |
+
+### Solana Contracts (Mainnet)
+
+| Contract | Address | Explorer |
+|----------|---------|----------|
+| **USDC Token** | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` | [View on Solscan](https://solscan.io/token/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v) |
+| **CCTP Message Transmitter** | `CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd` | [View on Solscan](https://solscan.io/account/CCTPmbSD7gX1bxKPAmg77w8oFzNFpaQiQUWD43TKaecd) |
+
+### Testnet Contracts
+
+Used by the testnet environment only — do not send real funds to these.
+
+| Network | Contract | Address |
+|---------|----------|---------|
+| Ethereum Sepolia | **USDC Token** | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
+| Ethereum Sepolia | **xReserve** | `0x008888878f94C0d87defdf0B07f46B93C1934442` |
 
 ### Contract Interactions
 
