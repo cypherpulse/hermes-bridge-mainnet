@@ -31,10 +31,17 @@ export default function MultiChain() {
         <Navbar />
 
         {/* Main Content */}
+        {/*
+          Every card here is max-w-lg and centred, so the page keeps one
+          consistent column width. The outer container is only wider to give
+          the bridge form room to expand into two columns (form + progress
+          card) once a bridge is actually running - until then nothing on
+          this page is any wider than the others.
+        */}
         <main className="container mx-auto px-4 py-12">
-          <div className="max-w-lg mx-auto space-y-6">
+          <div className="max-w-5xl mx-auto space-y-6">
             {/* Hero Section */}
-            <div className="text-center mb-8">
+            <div className="text-center mb-8 max-w-lg mx-auto">
               <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-1.5 rounded-full text-sm font-medium mb-4">
                 <Globe className="w-4 h-4" />
                 Multichain Bridge
@@ -117,7 +124,7 @@ export default function MultiChain() {
 
             {/* Stacks Wallet Connection (for destination) */}
             {!isStacksConnected && (
-              <div className="bg-card border border-border rounded-xl p-4">
+              <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-foreground">Connect Stacks Wallet</p>
@@ -135,7 +142,7 @@ export default function MultiChain() {
 
             {/* Connected Stacks Address */}
             {isStacksConnected && stacksAddress && (
-              <div className="bg-card border border-border rounded-xl p-4">
+              <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Stacks Destination</p>
@@ -151,16 +158,15 @@ export default function MultiChain() {
               </div>
             )}
 
-            {/* Bridge Form */}
-            <div className="bg-card/50 border border-border rounded-2xl p-6 backdrop-blur-sm">
-              <MultiChainBridgeForm 
-                isWalletConnected={isConnected}
-                stacksAddress={stacksAddress}
-              />
-            </div>
+            {/* Bridge Form - supplies its own card chrome, and grows into a
+                two-column layout (form + progress card) once a bridge runs. */}
+            <MultiChainBridgeForm
+              isWalletConnected={isConnected}
+              stacksAddress={stacksAddress}
+            />
 
             {/* Supported Chains */}
-            <div className="bg-card border border-border rounded-xl p-4">
+            <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-4">
               <p className="text-sm font-medium text-foreground mb-3">Supported Chains</p>
               <div className="grid grid-cols-2 gap-2">
                 {Object.values(CCTP_CHAINS).map((chain) => (
@@ -184,7 +190,7 @@ export default function MultiChain() {
             </div>
 
             {/* How it Works */}
-            <div className="bg-card border border-border rounded-xl p-4">
+            <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-4">
               <p className="text-sm font-medium text-foreground mb-3">How it Works</p>
               <div className="space-y-3">
                 <div className="flex items-start gap-3">
