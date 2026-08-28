@@ -22,9 +22,44 @@ export const BRIDGE_CONFIG = {
   CHAIN_ID: 1, // Ethereum mainnet
 
   // Hermes protocol fee (CCTP v2 EVM leg only). See src/lib/cctp-fees.ts.
+  // NOTE: this address is shared by BOTH EVM fee paths - the multichain leg
+  // (customFee inside the burn) and the Ethereum->Stacks leg (separate
+  // transfer). Clearing it disables fee collection on both.
   PROTOCOL_FEE_RECIPIENT_EVM: import.meta.env.VITE_PROTOCOL_FEE_RECIPIENT_EVM,
   PROTOCOL_FEE_RECIPIENT_STACKS: import.meta.env.VITE_PROTOCOL_FEE_RECIPIENT_STACKS,
+
+  /**
+   * Charge the Hermes fee on the Ethereum->Stacks leg?
+   *
+   * This leg is the odd one out. xReserve's `depositToRemote` has no
+   * fee-recipient parameter, so unlike the multichain leg - where the fee
+   * rides inside the burn for no extra gas - it needs a standalone USDC
+   * transfer. On mainnet that transfer costs the user roughly $2-5 in gas to
+   * collect a fee that is often a few cents, so it can cost far more than it
+   * earns.
+   *
+   * Defaults to ENABLED, preserving existing behaviour - a deploy should not
+   * silently stop collecting revenue. Set VITE_COLLECT_FEE_ETH_TO_STACKS=false
+   * to drop the step. This flag affects ONLY this leg; multichain fee
+   * collection is governed by PROTOCOL_FEE_RECIPIENT_EVM above and is
+   * unaffected either way.
+   */
+  COLLECT_FEE_ETH_TO_STACKS:
+    String(import.meta.env.VITE_COLLECT_FEE_ETH_TO_STACKS ?? "true").toLowerCase() !== "false",
 } as const;
+
+/**
+ * Single source of truth for whether the Ethereum->Stacks leg charges the
+ * Hermes fee. Both the payment (useBridge.payProtocolFee) and the UI - the
+ * progress step, the quote preview and the balance check in BridgeForm - must
+ * agree; if they drift, the form either bills for a step that never runs or
+ * demands a balance the user does not need.
+ */
+export function shouldChargeEthToStacksFee(): boolean {
+  return Boolean(
+    BRIDGE_CONFIG.COLLECT_FEE_ETH_TO_STACKS && BRIDGE_CONFIG.PROTOCOL_FEE_RECIPIENT_EVM,
+  );
+}
 
 // Contract ABIs
 export const X_RESERVE_ABI = [
