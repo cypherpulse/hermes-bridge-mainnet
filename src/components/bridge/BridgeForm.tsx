@@ -9,12 +9,12 @@ import { isValidStacksAddress } from "@/lib/stacks-address";
 import { toast } from "sonner";
 import { useBridgeStatus } from "@/hooks/useBridgeStatus";
 import { useBridgeFeeQuote } from "@/hooks/useBridgeFeeQuote";
-import { BRIDGE_CONFIG } from "@/lib/bridge-config";
+import { BRIDGE_CONFIG, shouldChargeEthToStacksFee } from "@/lib/bridge-config";
 import { calculateProtocolFee, type TransferSpeedPreference } from "@/lib/cctp-fees";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { BridgeProgress } from "@/components/multichain/BridgeProgress";
 import type { BridgeStep as ProgressStep } from "@/hooks/useMultiChainBridge";
-import { formatUsd, formatFeeUsd, formatTokenAmount, sanitizeAmountInput } from "@/lib/utils";
+import { cn, formatUsd, formatFeeUsd, formatTokenAmount, sanitizeAmountInput } from "@/lib/utils";
 import { friendlyErrorMessage } from "@/lib/error-messages";
 import { createTrackedTransaction, reportLeg, updateTrackedStatus } from "@/lib/tracking-client";
 import { LargeAmountConfirm, isLargeAmount } from "@/components/bridge/LargeAmountConfirm";
@@ -65,15 +65,21 @@ export function BridgeForm({
   // tracking to use it - reportLeg/updateTrackedStatus accept it directly.
   const trackedTxPromiseRef = useRef<Promise<string | null>>(Promise.resolve(null));
 
-  // xReserve leg fee/speed preview, including the Hermes protocol fee -
-  // collected as a separate USDC transfer to our treasury (see onPayFee),
-  // since xReserve's depositToRemote has no fee-recipient parameter.
+  // Whether this leg charges the Hermes fee at all. xReserve's
+  // depositToRemote has no fee-recipient parameter, so when enabled the fee
+  // is a separate USDC transfer on top (see onPayFee) rather than riding
+  // inside the burn as it does on the multichain leg.
+  const chargesFee = shouldChargeEthToStacksFee();
+
+  // xReserve leg fee/speed preview. The protocol fee is only included when
+  // this leg actually charges it, so the quote can't advertise a cost the
+  // user is never billed.
   const { quote: feeQuote, isLoading: isQuoteLoading } = useBridgeFeeQuote({
     amount,
     sourceDomain: 0,
     destDomain: BRIDGE_CONFIG.STACKS_DOMAIN,
     speed,
-    includeProtocolFee: true,
+    includeProtocolFee: chargesFee,
   });
 
   // Watch for bridge completion / failure once Stacks-side monitoring takes
@@ -116,9 +122,12 @@ export function BridgeForm({
 
   const parsedAmount = parseFloat(amount) || 0;
   const balance = parseFloat(usdcBalance) || 0;
-  // Balance must cover the deposit amount plus the Hermes fee, which is
-  // charged as a separate transfer on top (see handleBridge/onPayFee).
-  const totalRequired = parsedAmount + parseFloat(calculateProtocolFee(amount || '0').feeUsdc);
+  // Balance must cover the deposit amount plus the Hermes fee, which when
+  // charged is a separate transfer on top (see handleBridge/onPayFee). With
+  // the fee off, requiring that headroom would block bridges the user can
+  // actually afford - notably a max-balance bridge.
+  const totalRequired =
+    parsedAmount + (chargesFee ? parseFloat(calculateProtocolFee(amount || '0').feeUsdc) : 0);
   const hasEnoughBalance = parsedAmount > 0 && totalRequired <= balance;
   const isValidAddress = stacksAddress ? isValidStacksAddress(stacksAddress) : false;
   const largeAmountOk = !isLargeAmount(amount) || largeConfirmed;
@@ -135,7 +144,7 @@ export function BridgeForm({
     setPhase('bridging');
 
     const { feeUsdc } = calculateProtocolFee(amount);
-    const hasFee = parseFloat(feeUsdc) > 0;
+    const hasFee = chargesFee && parseFloat(feeUsdc) > 0;
 
     setProgressSteps([
       { id: 'approve', name: 'Approve USDC', description: 'Approve xReserve to spend USDC', status: 'in-progress' },
@@ -155,7 +164,10 @@ export function BridgeForm({
           destinationChain: 'Stacks',
           amount,
           speed,
-          protocolFeeUsdc: feeUsdc,
+          // Report what is actually collected, not what the rate would be -
+          // recording an uncharged fee would inflate the admin fee totals
+          // with revenue that never landed in the treasury.
+          protocolFeeUsdc: hasFee ? feeUsdc : '0',
           circleFeeUsdc: feeQuote?.estimatedCircleFeeUsdc,
         })
       : Promise.resolve(null);
@@ -426,8 +438,25 @@ export function BridgeForm({
     );
   }
 
+  // Two-column only while a bridge is running. The form stays narrow the rest
+  // of the time - widening it just to hold a progress list makes the inputs
+  // sprawl. On mobile the columns stack and progress goes first: once a bridge
+  // is underway it matters more than the form already filled in.
+  const hasProgress = phase === 'bridging' && progressSteps.length > 0;
+
   return (
-    <Card className="bg-card/70 backdrop-blur-xl border-border/50 shadow-xl shadow-black/20 animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div
+      className={cn(
+        'mx-auto w-full',
+        hasProgress ? 'max-w-5xl grid gap-6 items-start lg:grid-cols-2' : 'max-w-lg',
+      )}
+    >
+      <Card
+        className={cn(
+          'bg-card/70 backdrop-blur-xl border-border/50 shadow-xl shadow-black/20 animate-in fade-in slide-in-from-bottom-4 duration-300 min-w-0',
+          hasProgress && 'order-2 lg:order-1',
+        )}
+      >
       <CardHeader>
         <CardTitle className="text-xl text-foreground">Bridge USDC → USDCx</CardTitle>
         <CardDescription>
@@ -594,15 +623,20 @@ export function BridgeForm({
           </Button>
         )}
 
-        {/* Bridging progress */}
-        {phase === 'bridging' && (
+      </CardContent>
+      </Card>
+
+      {/* Progress gets its own card beside the form, sticky so the steps stay
+          in view while the page scrolls. */}
+      {hasProgress && (
+        <div className="order-1 lg:order-2 min-w-0 lg:sticky lg:top-24">
           <BridgeProgress
             steps={progressSteps}
             isCompleted={false}
             onReset={handleReset}
           />
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </div>
   );
 }
