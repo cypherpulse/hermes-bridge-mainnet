@@ -237,9 +237,13 @@ const Index = () => {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 py-12 flex-1">
-          <div className="max-w-lg mx-auto space-y-6">
+          {/* The outer container is wide enough for BridgeForm to open into a
+              two-column form + progress layout once a bridge starts. Everything
+              else keeps its own max-w-lg so the page still reads as one narrow
+              column the rest of the time - same pattern as MultiChain.tsx. */}
+          <div className="max-w-5xl mx-auto space-y-6">
             {/* Hero Section */}
-            <div className="text-center mb-8">
+            <div className="text-center mb-8 max-w-lg mx-auto">
               <h2 className="text-4xl font-bold mb-3">
                 <span className="text-white">Ethereum</span>
                 <span className="text-foreground"> ↔ </span>
@@ -334,12 +338,14 @@ const Index = () => {
             {mode === 'bridge' ? (
               <>
                 {/* Balance Display */}
-                <BalanceDisplay
-                  ethBalance={ethBalance}
-                  usdcBalance={usdcBalance}
-                  onRefresh={refreshBalances}
-                  isConnected={isEthConnected}
-                />
+                <div className="max-w-lg mx-auto w-full">
+                  <BalanceDisplay
+                    ethBalance={ethBalance}
+                    usdcBalance={usdcBalance}
+                    onRefresh={refreshBalances}
+                    isConnected={isEthConnected}
+                  />
+                </div>
 
                 {/* Bridge Form */}
                 <BridgeForm
@@ -356,7 +362,7 @@ const Index = () => {
             ) : (
               <>
                 {/* Withdraw Balance Display */}
-                <div className="bg-card border border-border rounded-xl p-6">
+                <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-semibold">Your Balance</h3>
                     <button
@@ -377,17 +383,19 @@ const Index = () => {
                 </div>
 
                 {/* Withdraw Form */}
-                <WithdrawForm
-                  isConnected={isStacksConnected}
-                  usdcxBalance={usdcxBalance}
-                  minWithdrawalAmount={minWithdrawalAmount}
-                  onWithdraw={burnUsdcx}
-                />
+                <div className="max-w-lg mx-auto w-full">
+                  <WithdrawForm
+                    isConnected={isStacksConnected}
+                    usdcxBalance={usdcxBalance}
+                    minWithdrawalAmount={minWithdrawalAmount}
+                    onWithdraw={burnUsdcx}
+                  />
+                </div>
               </>
             )}
 
             {/* Network Info */}
-            <div className="bg-card border border-border rounded-xl p-4 text-center mt-8">
+            <div className="max-w-lg mx-auto w-full bg-card border border-border rounded-xl p-4 text-center mt-8">
               <p className="text-xs text-muted-foreground">
                 Network: <span className="text-foreground">Ethereum</span> ↔ <span className="text-foreground">Stacks</span>
               </p>
