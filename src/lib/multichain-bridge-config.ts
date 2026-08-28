@@ -142,8 +142,12 @@ export const CCTP_CHAINS: Record<CCTPChainId, CCTPChainConfig> = {
     displayName: 'Polygon',
     chainId: 137,
     icon: 'https://res.cloudinary.com/dg5rr4ntw/image/upload/v1768900372/download_3_pnzwd3.png',
-    rpcUrl: alchemyRpc('polygon-mainnet', 'https://polygon-rpc.com'),
-    fallbackRpcUrls: ['https://polygon-rpc.com', 'https://polygon-bor.publicnode.com'],
+    // polygon-rpc.com now returns 401 "API key disabled, tenant disabled" for
+    // public traffic (verified live), so it must not be the first fallback -
+    // a failed balance read reads back as $0 and wrongly blocks the bridge
+    // with "Insufficient Balance". publicnode is the working public endpoint.
+    rpcUrl: alchemyRpc('polygon-mainnet', 'https://polygon-bor.publicnode.com'),
+    fallbackRpcUrls: ['https://polygon-bor.publicnode.com'],
     blockExplorer: 'https://polygonscan.com',
     usdcAddress: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     isTestnet: false,
