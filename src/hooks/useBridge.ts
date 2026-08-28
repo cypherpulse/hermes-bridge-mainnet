@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useAccount, useBalance, usePublicClient, useWalletClient, useReadContract } from 'wagmi';
 import { parseUnits, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { mainnet } from 'viem/chains';
-import { BRIDGE_CONFIG, ERC20_ABI, X_RESERVE_ABI } from '@/lib/bridge-config';
+import { BRIDGE_CONFIG, ERC20_ABI, X_RESERVE_ABI, shouldChargeEthToStacksFee } from '@/lib/bridge-config';
 import { encodeStacksAddress } from '@/lib/stacks-address';
 import { calculateBridgeFee, calculateProtocolFee, XRESERVE_FAST_FEE_BPS, type TransferSpeedPreference, type BridgeFeeQuote } from '@/lib/cctp-fees';
 
@@ -122,7 +122,7 @@ export function useBridge() {
     if (!walletClient || !address || !publicClient) {
       throw new Error('Wallet not connected');
     }
-    if (!BRIDGE_CONFIG.PROTOCOL_FEE_RECIPIENT_EVM) {
+    if (!shouldChargeEthToStacksFee()) {
       return null;
     }
 
