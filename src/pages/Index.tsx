@@ -19,6 +19,13 @@ interface WithdrawFormProps {
   onWithdraw: (amount: string, ethereumAddress: string) => Promise<string>;
 }
 
+// Fixed peg-out fee charged by the Stacks protocol on withdrawal, deducted
+// from the released USDC (this is not a Hermes fee - the actual released
+// amount comes back on completion via releasedAmountUsdc). Env-configurable so
+// a fee change doesn't require a code deploy. A separate STX network fee to
+// broadcast the burn is paid from the user's STX, not deducted from the USDC.
+const WITHDRAW_FEE_USDC = Number(import.meta.env.VITE_WITHDRAW_FEE_USDC ?? '4.8');
+
 // Maps real withdrawal status to the 4-dot Burn/Attest/Release/Complete UI.
 const WITHDRAW_DOT_THRESHOLD: Record<string, number> = {
   idle: 0,
@@ -38,6 +45,15 @@ const WithdrawForm = ({ isConnected, usdcxBalance, minWithdrawalAmount, onWithdr
   const withdrawStatus = useWithdrawStatus();
   const isActive = withdrawStatus.status !== 'idle';
   const dotsReached = WITHDRAW_DOT_THRESHOLD[withdrawStatus.status] ?? 0;
+
+  // Estimated USDC the user actually receives, after the fixed peg-out fee.
+  // null until a valid, above-fee amount is entered so we never flash a
+  // negative or nonsensical figure.
+  const parsedWithdrawAmount = parseFloat(amount);
+  const netReceived =
+    Number.isFinite(parsedWithdrawAmount) && parsedWithdrawAmount > WITHDRAW_FEE_USDC
+      ? parsedWithdrawAmount - WITHDRAW_FEE_USDC
+      : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,11 +105,16 @@ const WithdrawForm = ({ isConnected, usdcxBalance, minWithdrawalAmount, onWithdr
       <h3 className="text-lg font-semibold mb-4">Withdraw to Ethereum</h3>
 
       {/* Process Info */}
-      <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+      <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-2">
         <p className="text-sm text-blue-300">
           <strong>How withdrawal works:</strong> Your USDCx is burned on Stacks, Circle's attestation service detects the burn event,
           verifies it, and releases equivalent USDC to your Ethereum address. This process typically takes 5-15 minutes.
           Minimum withdrawal: {formatUsd(minWithdrawalAmount)} USDCx.
+        </p>
+        <p className="text-sm text-blue-300">
+          <strong>Withdrawal fee:</strong> The Stacks peg-out charges a fixed protocol fee of {formatUsd(WITHDRAW_FEE_USDC)} (deducted
+          from the released USDC), plus a small STX network fee to broadcast the burn transaction. You'll receive your withdrawal amount
+          minus the {formatUsd(WITHDRAW_FEE_USDC)} fee.
         </p>
       </div>
 
@@ -146,6 +167,12 @@ const WithdrawForm = ({ isConnected, usdcxBalance, minWithdrawalAmount, onWithdr
             className="w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
             disabled={!isConnected || isSubmitting || isActive}
           />
+          {netReceived !== null && (
+            <div className="mt-2 flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">You'll receive (after {formatUsd(WITHDRAW_FEE_USDC)} fee)</span>
+              <span className="font-medium text-foreground">≈ {formatUsd(netReceived)} USDC</span>
+            </div>
+          )}
         </div>
 
         <div>
