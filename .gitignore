@@ -36,6 +36,8 @@ pids
 coverage/
 *.lcov
 
+crsopreview.md
+
 # nyc test coverage
 .nyc_output
 
